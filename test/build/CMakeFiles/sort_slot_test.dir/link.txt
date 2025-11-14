@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/sort_slot_test.dir/sort_slot_test.cpp.o -o sort_slot_test 

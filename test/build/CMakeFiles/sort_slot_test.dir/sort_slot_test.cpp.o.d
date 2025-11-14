@@ -1,0 +1,9 @@
+CMakeFiles/sort_slot_test.dir/sort_slot_test.cpp.o: \
+ /home/www/test/sort_slot_test.cpp /usr/include/stdc-predef.h \
+ /usr/include/c++/11/cassert \
+ /usr/include/x86_64-linux-gnu/c++/11/bits/c++config.h \
+ /usr/include/assert.h /usr/include/features.h \
+ /usr/include/c++/11/cstdint /usr/include/c++/11/iostream \
+ /usr/include/c++/11/ostream /usr/include/c++/11/istream \
+ /usr/include/c++/11/ios /usr/include/c++/11/bits/istream.tcc \
+ /usr/include/c++/11/bits/cxxabi_forced.h

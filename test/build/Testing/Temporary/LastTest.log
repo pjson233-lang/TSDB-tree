@@ -1,0 +1,35 @@
+Start testing: Nov 14 18:04 CST
+----------------------------------------------------------
+1/2 Testing: basic_insert_test
+1/2 Test: basic_insert_test
+Command: "/home/www/test/build/basic_insert_test"
+Directory: /home/www/test/build
+"basic_insert_test" start time: Nov 14 18:04 CST
+Output:
+----------------------------------------------------------
+basic_insert_test passed with 1000 records.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"basic_insert_test" end time: Nov 14 18:04 CST
+"basic_insert_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/2 Testing: sort_slot_test
+2/2 Test: sort_slot_test
+Command: "/home/www/test/build/sort_slot_test"
+Directory: /home/www/test/build
+"sort_slot_test" start time: Nov 14 18:04 CST
+Output:
+----------------------------------------------------------
+sort_slot_test passed with 5 records.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"sort_slot_test" end time: Nov 14 18:04 CST
+"sort_slot_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Nov 14 18:04 CST

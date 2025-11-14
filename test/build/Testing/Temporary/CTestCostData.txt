@@ -1,0 +1,3 @@
+basic_insert_test 2 0.00242458
+sort_slot_test 1 0.00408954
+---
