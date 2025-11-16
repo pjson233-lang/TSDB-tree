@@ -7,6 +7,7 @@
 #include <functional>
 #include <thread>
 #include <vector>
+#include <array>
 
 // =========================
 // Configurable Parameters
@@ -253,9 +254,22 @@ public:
   // testing helper: access first leaf (for backward compatibility)
   SBTreeLeaf *root_leaf() { return &leaves_[0]; }
 
-  // testing helper: access all leaves
+  // testing helper: access all leaves (const)
   const SBTreeLeaf *leaf_at(size_t idx) const {
     return idx < kLeafCount ? &leaves_[idx] : nullptr;
+  }
+
+  // number of leaves
+  size_t leaf_count() const { return kLeafCount; }
+
+  // mutable leaf accessor by index
+  SBTreeLeaf *leaf_at_mut(size_t idx) {
+    return idx < kLeafCount ? &leaves_[idx] : nullptr;
+  }
+
+  // get leaf index from pointer
+  size_t leaf_index(const SBTreeLeaf *leaf) const {
+    return static_cast<size_t>(leaf - &leaves_[0]);
   }
 
 private:
@@ -420,18 +434,15 @@ inline void MergeWorker::sort_slot(Slot *s) {
             [](const Record &a, const Record &b) { return a.key < b.key; });
 }
 
+// Legacy per-slot routing kept for reference; no longer used in run_once.
 inline void MergeWorker::route_slot(Slot *s) {
-  if (!s) {
+  if (!s || !tree_) {
     return;
   }
   const uint16_t n = s->hwm;
   if (n == 0) {
     return;
   }
-  if (!tree_) {
-    return;
-  }
-  // Slot is sorted by key before route_slot is called.
   uint16_t start = 0;
   while (start < n) {
     const uint64_t key = s->recs[start].key;
@@ -439,23 +450,55 @@ inline void MergeWorker::route_slot(Slot *s) {
     if (!leaf) {
       break;
     }
-
     uint16_t end = start + 1;
-    // Group contiguous records that map to the same leaf.
     while (end < n && tree_->locate_leaf(s->recs[end].key) == leaf) {
       ++end;
     }
-
-    // Copy this run segment into a vector for merging.
     std::vector<Record> run(s->recs + start, s->recs + end);
     tree_->merge_run_into_leaf(leaf, run);
+    start = end;
+  }
+}
 
+// New helper: route one sorted slot into per-leaf batches without merging.
+template <size_t N>
+inline void route_slot_to_batches(SBTree *tree, Slot *s,
+                                  std::array<std::vector<Record>, N> &batches) {
+  if (!tree || !s) {
+    return;
+  }
+  const uint16_t n = s->hwm;
+  if (n == 0) {
+    return;
+  }
+  uint16_t start = 0;
+  while (start < n) {
+    const uint64_t key = s->recs[start].key;
+    SBTreeLeaf *leaf = tree->locate_leaf(key);
+    if (!leaf) {
+      break;
+    }
+    size_t leaf_idx = tree->leaf_index(leaf);
+    uint16_t end = start + 1;
+    while (end < n &&
+           tree->leaf_index(tree->locate_leaf(s->recs[end].key)) == leaf_idx) {
+      ++end;
+    }
+    auto &vec = batches[leaf_idx];
+    vec.insert(vec.end(), s->recs + start, s->recs + end);
     start = end;
   }
 }
 
 inline void MergeWorker::run_once() {
-  // Scan both buffers; process the one(s) that are SEALED.
+  if (!bm || !tree_) {
+    return;
+  }
+
+  constexpr size_t kLeafCount = SBTree::kLeafCount;
+  std::array<std::vector<Record>, kLeafCount> leaf_batches;
+
+  // 1) 扫描所有 SEALED buffer，把 slot 中的数据按 leaf 聚合到 leaf_batches
   for (int bi = 0; bi < 2; ++bi) {
     Buffer &buf = bm->buffers[bi];
     uint8_t st = buf.state.load(std::memory_order_acquire);
@@ -467,20 +510,26 @@ inline void MergeWorker::run_once() {
       if (!s || s->hwm == 0) {
         continue;
       }
-      // Only consume slots explicitly sealed by writers.
       if (s->state != SLOT_STATE_SEALED) {
         continue;
       }
-      // Stage 1: sort the slot
       sort_slot(s);
-      // Stage 2: route to leaf
-      route_slot(s);
-      // Avoid reprocessing the same slot in subsequent runs.
+      route_slot_to_batches(tree_, s, leaf_batches);
       s->hwm = 0;
       s->state = SLOT_STATE_CONSUMED;
     }
-    // Buffer remains SEALED until external flip/reset as per BufferManager
-    // policy.
+  }
+
+  // 2) 对每个 leaf 的 batch sort 一次，然后 merge_runs 一次
+  for (size_t leaf_idx = 0; leaf_idx < kLeafCount; ++leaf_idx) {
+    auto &batch = leaf_batches[leaf_idx];
+    if (batch.empty()) {
+      continue;
+    }
+    std::sort(batch.begin(), batch.end(),
+              [](const Record &a, const Record &b) { return a.key < b.key; });
+    SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
+    tree_->merge_run_into_leaf(leaf, batch);
   }
 }
 

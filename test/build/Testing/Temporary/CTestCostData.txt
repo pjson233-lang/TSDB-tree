@@ -1,4 +1,4 @@
-merge_basic_test 17 0.000154181
-concurrent_insert_flip_test 7 0.0461474
-read_fresh_test 2 0.00205155
+merge_basic_test 18 0.000166895
+concurrent_insert_flip_test 8 0.0507381
+read_fresh_test 3 0.00161522
 ---
