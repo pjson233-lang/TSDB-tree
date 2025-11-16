@@ -206,8 +206,8 @@ inline void BufferManager::seal_all_slots_for_flush() {
     Buffer &buf = buffers[bi];
     for (uint32_t si = 0; si < buf.slot_capacity; ++si) {
       Slot &s = buf.slots[si];
-      // 尾部未 seal 的 slot，在 flush 时主动封口
-      if (s.hwm > 0 && s.state == SLOT_STATE_WRITING) {
+      // 收尾时：只要还有数据且未被消费的 slot，都应当标记为已封口
+      if (s.hwm > 0 && s.state != SLOT_STATE_CONSUMED) {
         s.state = SLOT_STATE_SEALED;
       }
     }

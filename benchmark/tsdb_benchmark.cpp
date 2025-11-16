@@ -287,6 +287,13 @@ int main(int argc, char *argv[]) {
     avg_thread_us += t;
   avg_thread_us /= num_threads;
 
+  // 纯插入吞吐（仅计算插入阶段：用最慢的写线程耗时作为整体插入时间）
+  double insert_wall_sec =
+      (max_thread_us > 0.0) ? (max_thread_us / 1.0e6) : 0.0;
+  double mops_insert =
+      (insert_wall_sec > 0.0)
+          ? (static_cast<double>(total_insert_calls) / insert_wall_sec / 1.0e6)
+          : 0.0;
   std::cout
       << "\n===== Insert Benchmark Result (with background merge) =====\n";
   std::cout << "total insert calls (Engine::insert) : " << total_insert_calls
@@ -297,6 +304,8 @@ int main(int argc, char *argv[]) {
   std::cout << "alloc failures (buffer full)        : " << alloc_failures
             << "\n";
   std::cout << "total time                          : " << total_ms << " ms\n";
+  std::cout << "insert throughput                   : " << mops_insert
+            << " Mops/sec (pure Engine::insert)\n";
   std::cout << "front throughput                    : " << mops_front
             << " Mops/sec (buffered_records)\n";
   std::cout << "tree throughput                     : " << mops_tree
