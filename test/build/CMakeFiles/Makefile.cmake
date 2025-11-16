@@ -41,4 +41,5 @@ set(CMAKE_MAKEFILE_PRODUCTS
 set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/merge_basic_test.dir/DependInfo.cmake"
   "CMakeFiles/concurrent_insert_flip_test.dir/DependInfo.cmake"
+  "CMakeFiles/read_fresh_test.dir/DependInfo.cmake"
   )

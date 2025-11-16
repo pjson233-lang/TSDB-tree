@@ -1,0 +1,3 @@
+/home/www/sbtree1/benchmark/build/CMakeFiles/tsdb_benchmark.dir
+/home/www/sbtree1/benchmark/build/CMakeFiles/edit_cache.dir
+/home/www/sbtree1/benchmark/build/CMakeFiles/rebuild_cache.dir

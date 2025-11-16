@@ -37,10 +37,11 @@ static_assert(SLOT_SIZE_BYTES % alignof(Record) == 0,
 // Slot (SWMR)
 // =========================
 
-// Slot state: 0 = WRITING, 1 = SEALED
+// Slot state: 0 = WRITING, 1 = SEALED, 2 = CONSUMED
 enum : uint8_t {
   SLOT_STATE_WRITING = 0,
   SLOT_STATE_SEALED = 1,
+  SLOT_STATE_CONSUMED = 2,
 };
 
 struct Slot {
@@ -109,6 +110,9 @@ public:
 
   Buffer buffers[2];
 
+  // count of allocation failures (buffer full)
+  std::atomic<uint64_t> alloc_failures;
+
 private:
   std::atomic<uint32_t> w_idx; // 0 or 1
 };
@@ -117,7 +121,8 @@ private:
 // Inline Implementations
 // =========================
 
-inline BufferManager::BufferManager(uint32_t slots_per_buffer) : w_idx(0) {
+inline BufferManager::BufferManager(uint32_t slots_per_buffer)
+    : w_idx(0), alloc_failures(0) {
   for (int i = 0; i < 2; ++i) {
     Buffer &buf = buffers[i];
     buf.slot_capacity = slots_per_buffer;
@@ -147,11 +152,8 @@ inline Slot *BufferManager::allocate_slot() {
 
   uint32_t idx = buf.alloc_idx.fetch_add(1, std::memory_order_relaxed);
   if (idx >= buf.slot_capacity) {
-    // Buffer is full. With proper sizing and flush intervals this should not
-    // happen; treat as configuration/throughput bug in debug builds.
-    assert(
-        false &&
-        "Buffer is full: increase slots_per_buffer or reduce flush interval");
+    // Buffer is full. Track the failure; caller decides how to react.
+    alloc_failures.fetch_add(1, std::memory_order_relaxed);
     return nullptr;
   }
 
@@ -238,6 +240,8 @@ private:
 
 class SBTree {
 public:
+  static constexpr size_t kLeafCount = 4;
+
   SBTree();
 
   // route by key to leaf
@@ -246,11 +250,16 @@ public:
   // merge run from RDS into a leaf
   void merge_run_into_leaf(SBTreeLeaf *leaf, const std::vector<Record> &run);
 
-  // testing helper: access root leaf
-  SBTreeLeaf *root_leaf() { return &root_leaf_; }
+  // testing helper: access first leaf (for backward compatibility)
+  SBTreeLeaf *root_leaf() { return &leaves_[0]; }
+
+  // testing helper: access all leaves
+  const SBTreeLeaf *leaf_at(size_t idx) const {
+    return idx < kLeafCount ? &leaves_[idx] : nullptr;
+  }
 
 private:
-  SBTreeLeaf root_leaf_;
+  SBTreeLeaf leaves_[kLeafCount];
 };
 
 // =========================
@@ -270,14 +279,91 @@ private:
 };
 
 // =========================
+// Reader (Tree + RDS merge)
+// =========================
+
+class Reader {
+public:
+  Reader(BufferManager *bm, SBTree *tree) : bm_(bm), tree_(tree) {}
+
+  // Full scan for testing freshness: merge Tree data with current SEALED RDS.
+  std::vector<Record> scan_all() const {
+    std::vector<Record> result;
+    if (!bm_ || !tree_) {
+      return result;
+    }
+
+    const std::vector<Record> &tree_data = tree_->root_leaf()->data();
+
+    std::vector<Record> rds;
+    // Collect all sealed slots from sealed buffers
+    for (int bi = 0; bi < 2; ++bi) {
+      const Buffer &buf = bm_->buffers[bi];
+      uint8_t st = buf.state.load(std::memory_order_acquire);
+      if (st != BUFFER_STATE_SEALED) {
+        continue;
+      }
+      for (uint32_t i = 0; i < buf.slot_capacity; ++i) {
+        const Slot &s = buf.slots[i];
+        if (s.hwm == 0) {
+          continue;
+        }
+        if (s.state != SLOT_STATE_SEALED) {
+          continue;
+        }
+        rds.insert(rds.end(), s.recs, s.recs + s.hwm);
+      }
+    }
+
+    if (!rds.empty()) {
+      std::sort(rds.begin(), rds.end(),
+                [](const Record &a, const Record &b) { return a.key < b.key; });
+    }
+
+    // Two-way merge (both inputs sorted)
+    result.reserve(tree_data.size() + rds.size());
+    size_t i = 0, j = 0;
+    while (i < tree_data.size() && j < rds.size()) {
+      if (tree_data[i].key <= rds[j].key) {
+        result.push_back(tree_data[i++]);
+      } else {
+        result.push_back(rds[j++]);
+      }
+    }
+    while (i < tree_data.size()) {
+      result.push_back(tree_data[i++]);
+    }
+    while (j < rds.size()) {
+      result.push_back(rds[j++]);
+    }
+
+    return result;
+  }
+
+private:
+  BufferManager *bm_;
+  SBTree *tree_;
+};
+
+// =========================
 // Engine Inline Implementations
 // =========================
 
 inline SBTree::SBTree() = default;
 
-inline SBTreeLeaf *SBTree::locate_leaf(uint64_t /*key*/) {
-  // single-leaf stub: all keys map to root
-  return &root_leaf_;
+inline SBTreeLeaf *SBTree::locate_leaf(uint64_t key) {
+  // Simple range partitioning by high bits: split 64-bit key space into
+  // kLeafCount contiguous ranges.
+  if (kLeafCount == 0) {
+    return nullptr;
+  }
+  // Use the top log2(kLeafCount) bits to choose a leaf.
+  constexpr int bits = 2; // since kLeafCount == 4
+  size_t idx = static_cast<size_t>(key >> (64 - bits));
+  if (idx >= kLeafCount) {
+    idx = kLeafCount - 1;
+  }
+  return &leaves_[idx];
 }
 
 inline void SBTree::merge_run_into_leaf(SBTreeLeaf *leaf,
@@ -289,12 +375,33 @@ inline void SBTree::merge_run_into_leaf(SBTreeLeaf *leaf,
 }
 
 inline void SBTreeLeaf::merge_runs(const std::vector<Record> &newrun) {
-  // minimal correctness-first implementation: append then sort
-  if (!newrun.empty()) {
-    data_.insert(data_.end(), newrun.begin(), newrun.end());
-    std::sort(data_.begin(), data_.end(),
-              [](const Record &a, const Record &b) { return a.key < b.key; });
+  if (newrun.empty()) {
+    return;
   }
+
+  // Assume newrun is sorted by key (it should come from sorted slots).
+  // Merge existing sorted data_ with newrun into a new vector.
+  std::vector<Record> merged;
+  merged.reserve(data_.size() + newrun.size());
+
+  size_t i = 0;
+  size_t j = 0;
+
+  while (i < data_.size() && j < newrun.size()) {
+    if (data_[i].key <= newrun[j].key) {
+      merged.push_back(data_[i++]);
+    } else {
+      merged.push_back(newrun[j++]);
+    }
+  }
+  while (i < data_.size()) {
+    merged.push_back(data_[i++]);
+  }
+  while (j < newrun.size()) {
+    merged.push_back(newrun[j++]);
+  }
+
+  data_.swap(merged);
 }
 
 inline MergeWorker::MergeWorker(BufferManager *mgr, SBTree *tree)
@@ -324,14 +431,27 @@ inline void MergeWorker::route_slot(Slot *s) {
   if (!tree_) {
     return;
   }
-  const uint64_t min_key = s->recs[0].key;
-  SBTreeLeaf *leaf = tree_->locate_leaf(min_key);
-  if (!leaf) {
-    return;
+  // Slot is sorted by key before route_slot is called.
+  uint16_t start = 0;
+  while (start < n) {
+    const uint64_t key = s->recs[start].key;
+    SBTreeLeaf *leaf = tree_->locate_leaf(key);
+    if (!leaf) {
+      break;
+    }
+
+    uint16_t end = start + 1;
+    // Group contiguous records that map to the same leaf.
+    while (end < n && tree_->locate_leaf(s->recs[end].key) == leaf) {
+      ++end;
+    }
+
+    // Copy this run segment into a vector for merging.
+    std::vector<Record> run(s->recs + start, s->recs + end);
+    tree_->merge_run_into_leaf(leaf, run);
+
+    start = end;
   }
-  // Copy slot data into a run for now (simple correctness-first approach).
-  std::vector<Record> run(s->recs, s->recs + n);
-  tree_->merge_run_into_leaf(leaf, run);
 }
 
 inline void MergeWorker::run_once() {
@@ -357,6 +477,7 @@ inline void MergeWorker::run_once() {
       route_slot(s);
       // Avoid reprocessing the same slot in subsequent runs.
       s->hwm = 0;
+      s->state = SLOT_STATE_CONSUMED;
     }
     // Buffer remains SEALED until external flip/reset as per BufferManager
     // policy.

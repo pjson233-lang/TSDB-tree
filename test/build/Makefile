@@ -152,6 +152,19 @@ concurrent_insert_flip_test/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/concurrent_insert_flip_test.dir/build.make CMakeFiles/concurrent_insert_flip_test.dir/build
 .PHONY : concurrent_insert_flip_test/fast
 
+#=============================================================================
+# Target rules for targets named read_fresh_test
+
+# Build rule for target.
+read_fresh_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 read_fresh_test
+.PHONY : read_fresh_test
+
+# fast build rule for target.
+read_fresh_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/read_fresh_test.dir/build.make CMakeFiles/read_fresh_test.dir/build
+.PHONY : read_fresh_test/fast
+
 concurrent_insert_flip_test.o: concurrent_insert_flip_test.cpp.o
 .PHONY : concurrent_insert_flip_test.o
 
@@ -200,6 +213,30 @@ merge_basic_test.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/merge_basic_test.dir/build.make CMakeFiles/merge_basic_test.dir/merge_basic_test.cpp.s
 .PHONY : merge_basic_test.cpp.s
 
+read_fresh_test.o: read_fresh_test.cpp.o
+.PHONY : read_fresh_test.o
+
+# target to build an object file
+read_fresh_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/read_fresh_test.dir/build.make CMakeFiles/read_fresh_test.dir/read_fresh_test.cpp.o
+.PHONY : read_fresh_test.cpp.o
+
+read_fresh_test.i: read_fresh_test.cpp.i
+.PHONY : read_fresh_test.i
+
+# target to preprocess a source file
+read_fresh_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/read_fresh_test.dir/build.make CMakeFiles/read_fresh_test.dir/read_fresh_test.cpp.i
+.PHONY : read_fresh_test.cpp.i
+
+read_fresh_test.s: read_fresh_test.cpp.s
+.PHONY : read_fresh_test.s
+
+# target to generate assembly for a file
+read_fresh_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/read_fresh_test.dir/build.make CMakeFiles/read_fresh_test.dir/read_fresh_test.cpp.s
+.PHONY : read_fresh_test.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -211,12 +248,16 @@ help:
 	@echo "... test"
 	@echo "... concurrent_insert_flip_test"
 	@echo "... merge_basic_test"
+	@echo "... read_fresh_test"
 	@echo "... concurrent_insert_flip_test.o"
 	@echo "... concurrent_insert_flip_test.i"
 	@echo "... concurrent_insert_flip_test.s"
 	@echo "... merge_basic_test.o"
 	@echo "... merge_basic_test.i"
 	@echo "... merge_basic_test.s"
+	@echo "... read_fresh_test.o"
+	@echo "... read_fresh_test.i"
+	@echo "... read_fresh_test.s"
 .PHONY : help
 
 

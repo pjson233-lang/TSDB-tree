@@ -22,3 +22,9 @@ add_executable(concurrent_insert_flip_test
 
 add_test(NAME concurrent_insert_flip_test COMMAND concurrent_insert_flip_test)
 
+add_executable(read_fresh_test
+  read_fresh_test.cpp
+)
+
+add_test(NAME read_fresh_test COMMAND read_fresh_test)
+
