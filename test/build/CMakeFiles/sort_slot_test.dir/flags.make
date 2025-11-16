@@ -4,7 +4,7 @@
 # compile CXX with /usr/bin/c++
 CXX_DEFINES = 
 
-CXX_INCLUDES = -I/home/www/test/..
+CXX_INCLUDES = -I/home/www/sbtree1/test/..
 
 CXX_FLAGS = -std=c++20
 

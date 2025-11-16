@@ -57,10 +57,10 @@ RM = /usr/bin/cmake -E rm -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/www/test
+CMAKE_SOURCE_DIR = /home/www/sbtree1/test
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/www/test/build
+CMAKE_BINARY_DIR = /home/www/sbtree1/test/build
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -97,9 +97,9 @@ rebuild_cache/fast: rebuild_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/test/build/CMakeFiles /home/www/test/build//CMakeFiles/progress.marks
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/test/build/CMakeFiles /home/www/sbtree1/test/build//CMakeFiles/progress.marks
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/test/build/CMakeFiles 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/test/build/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
@@ -127,78 +127,78 @@ depend:
 .PHONY : depend
 
 #=============================================================================
-# Target rules for targets named basic_insert_test
+# Target rules for targets named merge_basic_test
 
 # Build rule for target.
-basic_insert_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 basic_insert_test
-.PHONY : basic_insert_test
+merge_basic_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 merge_basic_test
+.PHONY : merge_basic_test
 
 # fast build rule for target.
-basic_insert_test/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/basic_insert_test.dir/build.make CMakeFiles/basic_insert_test.dir/build
-.PHONY : basic_insert_test/fast
+merge_basic_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/merge_basic_test.dir/build.make CMakeFiles/merge_basic_test.dir/build
+.PHONY : merge_basic_test/fast
 
 #=============================================================================
-# Target rules for targets named sort_slot_test
+# Target rules for targets named concurrent_insert_flip_test
 
 # Build rule for target.
-sort_slot_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 sort_slot_test
-.PHONY : sort_slot_test
+concurrent_insert_flip_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 concurrent_insert_flip_test
+.PHONY : concurrent_insert_flip_test
 
 # fast build rule for target.
-sort_slot_test/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/sort_slot_test.dir/build.make CMakeFiles/sort_slot_test.dir/build
-.PHONY : sort_slot_test/fast
+concurrent_insert_flip_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/concurrent_insert_flip_test.dir/build.make CMakeFiles/concurrent_insert_flip_test.dir/build
+.PHONY : concurrent_insert_flip_test/fast
 
-basic_insert_test.o: basic_insert_test.cpp.o
-.PHONY : basic_insert_test.o
-
-# target to build an object file
-basic_insert_test.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/basic_insert_test.dir/build.make CMakeFiles/basic_insert_test.dir/basic_insert_test.cpp.o
-.PHONY : basic_insert_test.cpp.o
-
-basic_insert_test.i: basic_insert_test.cpp.i
-.PHONY : basic_insert_test.i
-
-# target to preprocess a source file
-basic_insert_test.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/basic_insert_test.dir/build.make CMakeFiles/basic_insert_test.dir/basic_insert_test.cpp.i
-.PHONY : basic_insert_test.cpp.i
-
-basic_insert_test.s: basic_insert_test.cpp.s
-.PHONY : basic_insert_test.s
-
-# target to generate assembly for a file
-basic_insert_test.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/basic_insert_test.dir/build.make CMakeFiles/basic_insert_test.dir/basic_insert_test.cpp.s
-.PHONY : basic_insert_test.cpp.s
-
-sort_slot_test.o: sort_slot_test.cpp.o
-.PHONY : sort_slot_test.o
+concurrent_insert_flip_test.o: concurrent_insert_flip_test.cpp.o
+.PHONY : concurrent_insert_flip_test.o
 
 # target to build an object file
-sort_slot_test.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/sort_slot_test.dir/build.make CMakeFiles/sort_slot_test.dir/sort_slot_test.cpp.o
-.PHONY : sort_slot_test.cpp.o
+concurrent_insert_flip_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/concurrent_insert_flip_test.dir/build.make CMakeFiles/concurrent_insert_flip_test.dir/concurrent_insert_flip_test.cpp.o
+.PHONY : concurrent_insert_flip_test.cpp.o
 
-sort_slot_test.i: sort_slot_test.cpp.i
-.PHONY : sort_slot_test.i
+concurrent_insert_flip_test.i: concurrent_insert_flip_test.cpp.i
+.PHONY : concurrent_insert_flip_test.i
 
 # target to preprocess a source file
-sort_slot_test.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/sort_slot_test.dir/build.make CMakeFiles/sort_slot_test.dir/sort_slot_test.cpp.i
-.PHONY : sort_slot_test.cpp.i
+concurrent_insert_flip_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/concurrent_insert_flip_test.dir/build.make CMakeFiles/concurrent_insert_flip_test.dir/concurrent_insert_flip_test.cpp.i
+.PHONY : concurrent_insert_flip_test.cpp.i
 
-sort_slot_test.s: sort_slot_test.cpp.s
-.PHONY : sort_slot_test.s
+concurrent_insert_flip_test.s: concurrent_insert_flip_test.cpp.s
+.PHONY : concurrent_insert_flip_test.s
 
 # target to generate assembly for a file
-sort_slot_test.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/sort_slot_test.dir/build.make CMakeFiles/sort_slot_test.dir/sort_slot_test.cpp.s
-.PHONY : sort_slot_test.cpp.s
+concurrent_insert_flip_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/concurrent_insert_flip_test.dir/build.make CMakeFiles/concurrent_insert_flip_test.dir/concurrent_insert_flip_test.cpp.s
+.PHONY : concurrent_insert_flip_test.cpp.s
+
+merge_basic_test.o: merge_basic_test.cpp.o
+.PHONY : merge_basic_test.o
+
+# target to build an object file
+merge_basic_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/merge_basic_test.dir/build.make CMakeFiles/merge_basic_test.dir/merge_basic_test.cpp.o
+.PHONY : merge_basic_test.cpp.o
+
+merge_basic_test.i: merge_basic_test.cpp.i
+.PHONY : merge_basic_test.i
+
+# target to preprocess a source file
+merge_basic_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/merge_basic_test.dir/build.make CMakeFiles/merge_basic_test.dir/merge_basic_test.cpp.i
+.PHONY : merge_basic_test.cpp.i
+
+merge_basic_test.s: merge_basic_test.cpp.s
+.PHONY : merge_basic_test.s
+
+# target to generate assembly for a file
+merge_basic_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/merge_basic_test.dir/build.make CMakeFiles/merge_basic_test.dir/merge_basic_test.cpp.s
+.PHONY : merge_basic_test.cpp.s
 
 # Help Target
 help:
@@ -209,14 +209,14 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... test"
-	@echo "... basic_insert_test"
-	@echo "... sort_slot_test"
-	@echo "... basic_insert_test.o"
-	@echo "... basic_insert_test.i"
-	@echo "... basic_insert_test.s"
-	@echo "... sort_slot_test.o"
-	@echo "... sort_slot_test.i"
-	@echo "... sort_slot_test.s"
+	@echo "... concurrent_insert_flip_test"
+	@echo "... merge_basic_test"
+	@echo "... concurrent_insert_flip_test.o"
+	@echo "... concurrent_insert_flip_test.i"
+	@echo "... concurrent_insert_flip_test.s"
+	@echo "... merge_basic_test.o"
+	@echo "... merge_basic_test.i"
+	@echo "... merge_basic_test.s"
 .PHONY : help
 
 

@@ -1,5 +1,5 @@
 CMakeFiles/sort_slot_test.dir/sort_slot_test.cpp.o: \
- /home/www/test/sort_slot_test.cpp /usr/include/stdc-predef.h \
+ /home/www/sbtree1/test/sort_slot_test.cpp /usr/include/stdc-predef.h \
  /usr/include/c++/11/cassert \
  /usr/include/x86_64-linux-gnu/c++/11/bits/c++config.h \
  /usr/include/assert.h /usr/include/features.h \

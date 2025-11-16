@@ -1,35 +1,35 @@
-Start testing: Nov 14 18:04 CST
+Start testing: Nov 16 13:57 CST
 ----------------------------------------------------------
-1/2 Testing: basic_insert_test
-1/2 Test: basic_insert_test
-Command: "/home/www/test/build/basic_insert_test"
-Directory: /home/www/test/build
-"basic_insert_test" start time: Nov 14 18:04 CST
+1/2 Testing: merge_basic_test
+1/2 Test: merge_basic_test
+Command: "/home/www/sbtree1/test/build/merge_basic_test"
+Directory: /home/www/sbtree1/test/build
+"merge_basic_test" start time: Nov 16 13:57 CST
 Output:
 ----------------------------------------------------------
-basic_insert_test passed with 1000 records.
+merge_basic_test passed.
 <end of output>
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"basic_insert_test" end time: Nov 14 18:04 CST
-"basic_insert_test" time elapsed: 00:00:00
+"merge_basic_test" end time: Nov 16 13:57 CST
+"merge_basic_test" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-2/2 Testing: sort_slot_test
-2/2 Test: sort_slot_test
-Command: "/home/www/test/build/sort_slot_test"
-Directory: /home/www/test/build
-"sort_slot_test" start time: Nov 14 18:04 CST
+2/2 Testing: concurrent_insert_flip_test
+2/2 Test: concurrent_insert_flip_test
+Command: "/home/www/sbtree1/test/build/concurrent_insert_flip_test"
+Directory: /home/www/sbtree1/test/build
+"concurrent_insert_flip_test" start time: Nov 16 13:57 CST
 Output:
 ----------------------------------------------------------
-sort_slot_test passed with 5 records.
+concurrent_insert_flip_test passed. total=40000
 <end of output>
-Test time =   0.00 sec
+Test time =   0.34 sec
 ----------------------------------------------------------
 Test Passed.
-"sort_slot_test" end time: Nov 14 18:04 CST
-"sort_slot_test" time elapsed: 00:00:00
+"concurrent_insert_flip_test" end time: Nov 16 13:57 CST
+"concurrent_insert_flip_test" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Nov 14 18:04 CST
+End testing: Nov 16 13:57 CST

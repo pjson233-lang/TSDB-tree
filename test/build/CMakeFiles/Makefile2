@@ -54,17 +54,17 @@ RM = /usr/bin/cmake -E rm -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/www/test
+CMAKE_SOURCE_DIR = /home/www/sbtree1/test
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/www/test/build
+CMAKE_BINARY_DIR = /home/www/sbtree1/test/build
 
 #=============================================================================
 # Directory level rules for the build root directory
 
 # The main recursive "all" target.
-all: CMakeFiles/basic_insert_test.dir/all
-all: CMakeFiles/sort_slot_test.dir/all
+all: CMakeFiles/merge_basic_test.dir/all
+all: CMakeFiles/concurrent_insert_flip_test.dir/all
 .PHONY : all
 
 # The main recursive "preinstall" target.
@@ -72,61 +72,61 @@ preinstall:
 .PHONY : preinstall
 
 # The main recursive "clean" target.
-clean: CMakeFiles/basic_insert_test.dir/clean
-clean: CMakeFiles/sort_slot_test.dir/clean
+clean: CMakeFiles/merge_basic_test.dir/clean
+clean: CMakeFiles/concurrent_insert_flip_test.dir/clean
 .PHONY : clean
 
 #=============================================================================
-# Target rules for target CMakeFiles/basic_insert_test.dir
+# Target rules for target CMakeFiles/merge_basic_test.dir
 
 # All Build rule for target.
-CMakeFiles/basic_insert_test.dir/all:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/basic_insert_test.dir/build.make CMakeFiles/basic_insert_test.dir/depend
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/basic_insert_test.dir/build.make CMakeFiles/basic_insert_test.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/www/test/build/CMakeFiles --progress-num=1,2 "Built target basic_insert_test"
-.PHONY : CMakeFiles/basic_insert_test.dir/all
+CMakeFiles/merge_basic_test.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/merge_basic_test.dir/build.make CMakeFiles/merge_basic_test.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/merge_basic_test.dir/build.make CMakeFiles/merge_basic_test.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/www/sbtree1/test/build/CMakeFiles --progress-num=3,4 "Built target merge_basic_test"
+.PHONY : CMakeFiles/merge_basic_test.dir/all
 
 # Build rule for subdir invocation for target.
-CMakeFiles/basic_insert_test.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/test/build/CMakeFiles 2
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/basic_insert_test.dir/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/test/build/CMakeFiles 0
-.PHONY : CMakeFiles/basic_insert_test.dir/rule
+CMakeFiles/merge_basic_test.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/test/build/CMakeFiles 2
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/merge_basic_test.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/test/build/CMakeFiles 0
+.PHONY : CMakeFiles/merge_basic_test.dir/rule
 
 # Convenience name for target.
-basic_insert_test: CMakeFiles/basic_insert_test.dir/rule
-.PHONY : basic_insert_test
+merge_basic_test: CMakeFiles/merge_basic_test.dir/rule
+.PHONY : merge_basic_test
 
 # clean rule for target.
-CMakeFiles/basic_insert_test.dir/clean:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/basic_insert_test.dir/build.make CMakeFiles/basic_insert_test.dir/clean
-.PHONY : CMakeFiles/basic_insert_test.dir/clean
+CMakeFiles/merge_basic_test.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/merge_basic_test.dir/build.make CMakeFiles/merge_basic_test.dir/clean
+.PHONY : CMakeFiles/merge_basic_test.dir/clean
 
 #=============================================================================
-# Target rules for target CMakeFiles/sort_slot_test.dir
+# Target rules for target CMakeFiles/concurrent_insert_flip_test.dir
 
 # All Build rule for target.
-CMakeFiles/sort_slot_test.dir/all:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/sort_slot_test.dir/build.make CMakeFiles/sort_slot_test.dir/depend
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/sort_slot_test.dir/build.make CMakeFiles/sort_slot_test.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/www/test/build/CMakeFiles --progress-num=3,4 "Built target sort_slot_test"
-.PHONY : CMakeFiles/sort_slot_test.dir/all
+CMakeFiles/concurrent_insert_flip_test.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/concurrent_insert_flip_test.dir/build.make CMakeFiles/concurrent_insert_flip_test.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/concurrent_insert_flip_test.dir/build.make CMakeFiles/concurrent_insert_flip_test.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/www/sbtree1/test/build/CMakeFiles --progress-num=1,2 "Built target concurrent_insert_flip_test"
+.PHONY : CMakeFiles/concurrent_insert_flip_test.dir/all
 
 # Build rule for subdir invocation for target.
-CMakeFiles/sort_slot_test.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/test/build/CMakeFiles 2
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/sort_slot_test.dir/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/test/build/CMakeFiles 0
-.PHONY : CMakeFiles/sort_slot_test.dir/rule
+CMakeFiles/concurrent_insert_flip_test.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/test/build/CMakeFiles 2
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/concurrent_insert_flip_test.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/test/build/CMakeFiles 0
+.PHONY : CMakeFiles/concurrent_insert_flip_test.dir/rule
 
 # Convenience name for target.
-sort_slot_test: CMakeFiles/sort_slot_test.dir/rule
-.PHONY : sort_slot_test
+concurrent_insert_flip_test: CMakeFiles/concurrent_insert_flip_test.dir/rule
+.PHONY : concurrent_insert_flip_test
 
 # clean rule for target.
-CMakeFiles/sort_slot_test.dir/clean:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/sort_slot_test.dir/build.make CMakeFiles/sort_slot_test.dir/clean
-.PHONY : CMakeFiles/sort_slot_test.dir/clean
+CMakeFiles/concurrent_insert_flip_test.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/concurrent_insert_flip_test.dir/build.make CMakeFiles/concurrent_insert_flip_test.dir/clean
+.PHONY : CMakeFiles/concurrent_insert_flip_test.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

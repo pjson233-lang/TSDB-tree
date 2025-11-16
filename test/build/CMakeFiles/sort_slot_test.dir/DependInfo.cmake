@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/home/www/test/sort_slot_test.cpp" "CMakeFiles/sort_slot_test.dir/sort_slot_test.cpp.o" "gcc" "CMakeFiles/sort_slot_test.dir/sort_slot_test.cpp.o.d"
+  "/home/www/sbtree1/test/sort_slot_test.cpp" "CMakeFiles/sort_slot_test.dir/sort_slot_test.cpp.o" "gcc" "CMakeFiles/sort_slot_test.dir/sort_slot_test.cpp.o.d"
   )
 
 # Targets to which this target links.

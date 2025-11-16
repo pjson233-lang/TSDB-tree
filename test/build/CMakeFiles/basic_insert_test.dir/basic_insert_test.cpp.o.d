@@ -1,5 +1,5 @@
 CMakeFiles/basic_insert_test.dir/basic_insert_test.cpp.o: \
- /home/www/test/basic_insert_test.cpp /usr/include/stdc-predef.h \
+ /home/www/sbtree1/test/basic_insert_test.cpp /usr/include/stdc-predef.h \
  /usr/include/c++/11/cassert \
  /usr/include/x86_64-linux-gnu/c++/11/bits/c++config.h \
  /usr/include/assert.h /usr/include/features.h \

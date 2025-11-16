@@ -81,7 +81,7 @@ struct ThreadLocalCtx {
   ThreadLocalCtx() : current_slot(nullptr), current_buf_idx(0) {}
 };
 
-thread_local ThreadLocalCtx tls_ctx;
+inline thread_local ThreadLocalCtx tls_ctx;
 
 // =========================
 // Buffer Manager
@@ -200,7 +200,7 @@ inline void BufferManager::flip_buffers() {
 
 class MergeWorker {
 public:
-  explicit MergeWorker(BufferManager *mgr);
+  explicit MergeWorker(BufferManager *mgr, class SBTree *tree);
 
   // Called by background thread
   void run_once(); // sort + route + merge
@@ -213,33 +213,28 @@ public:
 
 private:
   BufferManager *bm;
+  class SBTree *tree_;
 };
 
 // =========================
 // MergeWorker Inline Implementations
 // =========================
 
-inline MergeWorker::MergeWorker(BufferManager *mgr) : bm(mgr) {}
-
-inline void MergeWorker::sort_slot(Slot *s) {
-  if (!s) {
-    return;
-  }
-  const uint16_t n = s->hwm;
-  if (n <= 1) {
-    return;
-  }
-
-  std::sort(s->recs, s->recs + n,
-            [](const Record &a, const Record &b) { return a.key < b.key; });
-}
-
 // =========================
 // SB-Tree Interfaces (Final Storage Layer)
 // =========================
 
-class SBTreeLeaf;
-class SBTree;
+class SBTreeLeaf {
+public:
+  SBTreeLeaf() = default;
+  void merge_runs(const std::vector<Record> &newrun);
+
+  // testing helper
+  const std::vector<Record> &data() const { return data_; }
+
+private:
+  std::vector<Record> data_;
+};
 
 class SBTree {
 public:
@@ -250,11 +245,12 @@ public:
 
   // merge run from RDS into a leaf
   void merge_run_into_leaf(SBTreeLeaf *leaf, const std::vector<Record> &run);
-};
 
-class SBTreeLeaf {
-public:
-  void merge_runs(const std::vector<Record> &newrun);
+  // testing helper: access root leaf
+  SBTreeLeaf *root_leaf() { return &root_leaf_; }
+
+private:
+  SBTreeLeaf root_leaf_;
 };
 
 // =========================
@@ -277,6 +273,96 @@ private:
 // Engine Inline Implementations
 // =========================
 
+inline SBTree::SBTree() = default;
+
+inline SBTreeLeaf *SBTree::locate_leaf(uint64_t /*key*/) {
+  // single-leaf stub: all keys map to root
+  return &root_leaf_;
+}
+
+inline void SBTree::merge_run_into_leaf(SBTreeLeaf *leaf,
+                                        const std::vector<Record> &run) {
+  if (!leaf) {
+    return;
+  }
+  leaf->merge_runs(run);
+}
+
+inline void SBTreeLeaf::merge_runs(const std::vector<Record> &newrun) {
+  // minimal correctness-first implementation: append then sort
+  if (!newrun.empty()) {
+    data_.insert(data_.end(), newrun.begin(), newrun.end());
+    std::sort(data_.begin(), data_.end(),
+              [](const Record &a, const Record &b) { return a.key < b.key; });
+  }
+}
+
+inline MergeWorker::MergeWorker(BufferManager *mgr, SBTree *tree)
+    : bm(mgr), tree_(tree) {}
+
+inline void MergeWorker::sort_slot(Slot *s) {
+  if (!s) {
+    return;
+  }
+  const uint16_t n = s->hwm;
+  if (n <= 1) {
+    return;
+  }
+
+  std::sort(s->recs, s->recs + n,
+            [](const Record &a, const Record &b) { return a.key < b.key; });
+}
+
+inline void MergeWorker::route_slot(Slot *s) {
+  if (!s) {
+    return;
+  }
+  const uint16_t n = s->hwm;
+  if (n == 0) {
+    return;
+  }
+  if (!tree_) {
+    return;
+  }
+  const uint64_t min_key = s->recs[0].key;
+  SBTreeLeaf *leaf = tree_->locate_leaf(min_key);
+  if (!leaf) {
+    return;
+  }
+  // Copy slot data into a run for now (simple correctness-first approach).
+  std::vector<Record> run(s->recs, s->recs + n);
+  tree_->merge_run_into_leaf(leaf, run);
+}
+
+inline void MergeWorker::run_once() {
+  // Scan both buffers; process the one(s) that are SEALED.
+  for (int bi = 0; bi < 2; ++bi) {
+    Buffer &buf = bm->buffers[bi];
+    uint8_t st = buf.state.load(std::memory_order_acquire);
+    if (st != BUFFER_STATE_SEALED) {
+      continue;
+    }
+    for (uint32_t i = 0; i < buf.slot_capacity; ++i) {
+      Slot *s = &buf.slots[i];
+      if (!s || s->hwm == 0) {
+        continue;
+      }
+      // Only consume slots explicitly sealed by writers.
+      if (s->state != SLOT_STATE_SEALED) {
+        continue;
+      }
+      // Stage 1: sort the slot
+      sort_slot(s);
+      // Stage 2: route to leaf
+      route_slot(s);
+      // Avoid reprocessing the same slot in subsequent runs.
+      s->hwm = 0;
+    }
+    // Buffer remains SEALED until external flip/reset as per BufferManager
+    // policy.
+  }
+}
+
 inline Engine::Engine(BufferManager *buf_mgr, SBTree *tree)
     : bm(buf_mgr), tree(tree) {}
 
@@ -287,7 +373,11 @@ inline void Engine::insert(uint64_t key, uint64_t value) {
   uint32_t w = bm->current_w_idx();
 
   // Slow path: no current slot or slot is full.
-  if (s == nullptr || s->hwm >= SLOT_CAPACITY) {
+  if (s == nullptr || s->hwm >= SLOT_CAPACITY || tls_ctx.current_buf_idx != w) {
+    // Seal previous slot if switching away due to full or buffer flip.
+    if (s != nullptr && (s->hwm > 0)) {
+      s->state = SLOT_STATE_SEALED;
+    }
     s = bm->allocate_slot();
     if (!s) {
       // Allocation failed (buffer full). In this minimal implementation we
