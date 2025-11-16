@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cstdint>
@@ -7,7 +8,6 @@
 #include <functional>
 #include <thread>
 #include <vector>
-#include <array>
 
 // =========================
 // Configurable Parameters
@@ -104,6 +104,10 @@ public:
   // flip W buffer (every time slice)
   void flip_buffers();
 
+  // Seal all non-empty WRITING slots and mark buffers SEALED (for
+  // flush/shutdown)
+  void seal_all_slots_for_flush();
+
   // get active write buffer idx (0/1)
   inline uint32_t current_w_idx() const {
     return w_idx.load(std::memory_order_acquire);
@@ -195,6 +199,21 @@ inline void BufferManager::flip_buffers() {
   // Reset next buffer allocator & mark as writing.
   buffers[next].alloc_idx.store(0, std::memory_order_relaxed);
   buffers[next].state.store(BUFFER_STATE_WRITING, std::memory_order_relaxed);
+}
+
+inline void BufferManager::seal_all_slots_for_flush() {
+  for (int bi = 0; bi < 2; ++bi) {
+    Buffer &buf = buffers[bi];
+    for (uint32_t si = 0; si < buf.slot_capacity; ++si) {
+      Slot &s = buf.slots[si];
+      // 尾部未 seal 的 slot，在 flush 时主动封口
+      if (s.hwm > 0 && s.state == SLOT_STATE_WRITING) {
+        s.state = SLOT_STATE_SEALED;
+      }
+    }
+    // 将 buffer 标记为 SEALED，允许 MergeWorker 消费
+    buf.state.store(BUFFER_STATE_SEALED, std::memory_order_relaxed);
+  }
 }
 
 // =========================
@@ -563,4 +582,15 @@ inline void Engine::insert(uint64_t key, uint64_t value) {
   uint16_t pos = s->hwm++;
   // Epoch is currently unused; set to 0.
   s->recs[pos] = Record{key, value, 0};
+}
+
+// Flush all WRITING slots into SEALED state and run one merge pass.
+// 典型用途：系统 shutdown 之前调用一次，保证所有尾部数据都 merge 到 Tree。
+inline void flush_all_and_merge_once(BufferManager *bm, SBTree *tree) {
+  if (!bm || !tree) {
+    return;
+  }
+  bm->seal_all_slots_for_flush();
+  MergeWorker mw(bm, tree);
+  mw.run_once();
 }

@@ -89,8 +89,8 @@ void GenerateTimeSeriesData(uint64_t num_records) {
       (num_records + kNumSeries - 1) / kNumSeries; // 上界预估
 
   std::cout << "[Generator] target records = " << num_records << "\n";
-  std::cout << "[Generator] series = " << kNumSeries
-            << ", per_series_cap ≈ " << per_series_cap << "\n";
+  std::cout << "[Generator] series = " << kNumSeries << ", per_series_cap ≈ "
+            << per_series_cap << "\n";
 
   uint64_t generated = 0;
   for (SeriesId sid = 0; sid < kNumSeries && generated < num_records; ++sid) {
@@ -119,8 +119,7 @@ void InsertThreadFunc(Engine *eng, double &elapsed_us,
   uint64_t local_count = 0;
 
   while (true) {
-    uint32_t sid =
-        g_insert_series_id.fetch_add(1, std::memory_order_relaxed);
+    uint32_t sid = g_insert_series_id.fetch_add(1, std::memory_order_relaxed);
     if (sid >= kNumSeries) {
       break;
     }
@@ -221,9 +220,8 @@ int main(int argc, char *argv[]) {
       next += std::chrono::milliseconds(kFlipIntervalMs);
       std::this_thread::sleep_until(next);
 
-      auto t0 = clock::now();
-      bm.flip_buffers();
       auto m0 = clock::now();
+      bm.flip_buffers();
       worker.run_once();
       auto m1 = clock::now();
 
@@ -232,17 +230,6 @@ int main(int argc, char *argv[]) {
               .count();
       ++merge_iterations;
     }
-
-    // 退出前再做一次最终 flush
-    auto t0 = clock::now();
-    bm.flip_buffers();
-    auto m0 = clock::now();
-    worker.run_once();
-    auto m1 = clock::now();
-    merge_time_us +=
-        std::chrono::duration_cast<std::chrono::microseconds>(m1 - m0)
-            .count();
-    ++merge_iterations;
   });
 
   // 4) 多线程写入
@@ -266,6 +253,8 @@ int main(int argc, char *argv[]) {
   if (flipper.joinable()) {
     flipper.join();
   }
+  // 收尾：统一封口 WRITING slots 并做一次最终 merge
+  flush_all_and_merge_once(&bm, &tree);
 
   double total_us = total_timer.EndUs();
 
@@ -276,8 +265,7 @@ int main(int argc, char *argv[]) {
   }
 
   uint64_t buffered_records = CountBufferedRecords(bm);
-  uint64_t alloc_failures =
-      bm.alloc_failures.load(std::memory_order_relaxed);
+  uint64_t alloc_failures = bm.alloc_failures.load(std::memory_order_relaxed);
   uint64_t tree_records = CountTreeRecords(tree);
 
   double total_ms = total_us / 1000.0;
@@ -299,13 +287,13 @@ int main(int argc, char *argv[]) {
     avg_thread_us += t;
   avg_thread_us /= num_threads;
 
-  std::cout << "\n===== Insert Benchmark Result (with background merge) =====\n";
+  std::cout
+      << "\n===== Insert Benchmark Result (with background merge) =====\n";
   std::cout << "total insert calls (Engine::insert) : " << total_insert_calls
             << "\n";
   std::cout << "buffered records (sum of hwm)       : " << buffered_records
             << "\n";
-  std::cout << "tree records (sum of leaves)        : " << tree_records
-            << "\n";
+  std::cout << "tree records (sum of leaves)        : " << tree_records << "\n";
   std::cout << "alloc failures (buffer full)        : " << alloc_failures
             << "\n";
   std::cout << "total time                          : " << total_ms << " ms\n";
@@ -318,19 +306,19 @@ int main(int argc, char *argv[]) {
             << ", avg=" << avg_thread_us << "\n";
 
   double merge_ms = merge_time_us / 1000.0;
-  double merge_ratio =
-      (total_ms > 0.0) ? (merge_ms / total_ms * 100.0) : 0.0;
+  double merge_ratio = (total_ms > 0.0) ? (merge_ms / total_ms * 100.0) : 0.0;
   std::cout << "merge iterations                    : " << merge_iterations
             << "\n";
-  std::cout << "merge total time                    : " << merge_ms
-            << " ms (" << merge_ratio << "% of total)\n";
+  std::cout << "merge total time                    : " << merge_ms << " ms ("
+            << merge_ratio << "% of total)\n";
 
   uint64_t in_memory = buffered_records + tree_records;
   if (alloc_failures == 0 && in_memory == total_insert_calls) {
     std::cout
         << "[Check] All records are in memory (Tree + Buffers), no drops.\n";
   } else {
-    std::cout << "[Check] WARNING: some records may be dropped or not merged.\n";
+    std::cout
+        << "[Check] WARNING: some records may be dropped or not merged.\n";
     if (total_insert_calls > in_memory) {
       std::cout << "         approx dropped = "
                 << (total_insert_calls - in_memory) << "\n";
@@ -344,5 +332,3 @@ int main(int argc, char *argv[]) {
   std::cout << "=============================================\n";
   return 0;
 }
-
-
