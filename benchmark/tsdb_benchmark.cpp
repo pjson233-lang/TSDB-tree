@@ -145,7 +145,7 @@ uint64_t CountBufferedRecords(const BufferManager &bm) {
     const Buffer &buf = bm.buffers[bi];
     for (uint32_t i = 0; i < buf.slot_capacity; ++i) {
       const Slot &s = buf.slots[i];
-      total += s.hwm;
+      total += s.hwm.load(std::memory_order_acquire);
     }
   }
   return total;

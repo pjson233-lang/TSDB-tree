@@ -32,7 +32,8 @@ int main() {
   for (uint32_t si = 0; si < buf.slot_capacity; ++si) {
     Slot &s = buf.slots[si];
     // Each record should appear exactly once in insertion order within slots.
-    for (uint16_t j = 0; j < s.hwm; ++j) {
+    uint16_t n = s.hwm.load(std::memory_order_acquire);
+    for (uint16_t j = 0; j < n; ++j) {
       const Record &r = s.recs[j];
       assert(r.key == expected_key);
       assert(r.value == expected_key * 10);
@@ -42,10 +43,8 @@ int main() {
   }
 
   assert(total_records == kNumInserts);
-  std::cout << "basic_insert_test passed with " << total_records
-            << " records." << std::endl;
+  std::cout << "basic_insert_test passed with " << total_records << " records."
+            << std::endl;
 
   return 0;
 }
-
-

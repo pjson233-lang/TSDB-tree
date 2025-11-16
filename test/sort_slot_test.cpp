@@ -31,7 +31,7 @@ int main() {
     s.recs[i].value = keys[i] * 10;
     s.recs[i].epoch = 0;
   }
-  s.hwm = n;
+  s.hwm.store(n, std::memory_order_relaxed);
 
   worker.sort_slot(&s);
 
@@ -48,5 +48,3 @@ int main() {
   std::cout << "sort_slot_test passed with " << n << " records." << std::endl;
   return 0;
 }
-
-

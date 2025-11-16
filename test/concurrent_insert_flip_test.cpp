@@ -72,8 +72,8 @@ int main() {
     Buffer &buf = bm.buffers[bi];
     for (uint32_t i = 0; i < buf.slot_capacity; ++i) {
       Slot &s = buf.slots[i];
-      if (s.hwm > 0) {
-        s.state = SLOT_STATE_SEALED;
+      if (s.hwm.load(std::memory_order_acquire) > 0) {
+        s.state.store(SLOT_STATE_SEALED, std::memory_order_release);
       }
     }
     // Ensure buffer is visible to merge worker.

@@ -46,11 +46,19 @@ enum : uint8_t {
 };
 
 struct Slot {
-  Record *recs;  // pointer to continuous memory (16KB)
-  uint16_t hwm;  // number of valid records (SWMR)
-  uint8_t state; // 0=WRITING, 1=SEALED
+  // Pointer to contiguous records buffer (size: SLOT_SIZE_BYTES /
+  // sizeof(Record))
+  Record *recs;
+  // High-water mark: number of valid records in this slot.
+  // Only the owning writer thread increments this; readers/mergers read it
+  // after observing state == SLOT_STATE_SEALED. We still make it atomic so that
+  // flush/merge/统计代码在并发场景下没有数据竞争。
+  std::atomic<uint16_t> hwm;
+  // Slot state: WRITING / SEALED / CONSUMED. Accessed concurrently by writer,
+  // merge thread, and flush logic, so it must be atomic.
+  std::atomic<uint8_t> state;
 
-  Slot() : recs(nullptr), hwm(0), state(0) {}
+  Slot() : recs(nullptr), hwm(0), state(SLOT_STATE_WRITING) {}
 };
 
 // =========================
@@ -137,8 +145,8 @@ inline BufferManager::BufferManager(uint32_t slots_per_buffer)
     buf.slots = new Slot[slots_per_buffer];
     for (uint32_t j = 0; j < slots_per_buffer; ++j) {
       Slot &s = buf.slots[j];
-      s.hwm = 0;
-      s.state = SLOT_STATE_WRITING;
+      s.hwm.store(0, std::memory_order_relaxed);
+      s.state.store(SLOT_STATE_WRITING, std::memory_order_relaxed);
 
       void *mem = std::aligned_alloc(64, SLOT_SIZE_BYTES);
       if (!mem) {
@@ -163,8 +171,8 @@ inline Slot *BufferManager::allocate_slot() {
   }
 
   Slot &s = buf.slots[idx];
-  s.hwm = 0;
-  s.state = SLOT_STATE_WRITING;
+  s.hwm.store(0, std::memory_order_relaxed);
+  s.state.store(SLOT_STATE_WRITING, std::memory_order_relaxed);
   return &s;
 }
 
@@ -206,9 +214,11 @@ inline void BufferManager::seal_all_slots_for_flush() {
     Buffer &buf = buffers[bi];
     for (uint32_t si = 0; si < buf.slot_capacity; ++si) {
       Slot &s = buf.slots[si];
+      uint8_t st = s.state.load(std::memory_order_acquire);
+      uint16_t h = s.hwm.load(std::memory_order_acquire);
       // 收尾时：只要还有数据且未被消费的 slot，都应当标记为已封口
-      if (s.hwm > 0 && s.state != SLOT_STATE_CONSUMED) {
-        s.state = SLOT_STATE_SEALED;
+      if (h > 0 && st != SLOT_STATE_CONSUMED) {
+        s.state.store(SLOT_STATE_SEALED, std::memory_order_release);
       }
     }
     // 将 buffer 标记为 SEALED，允许 MergeWorker 消费
@@ -332,19 +342,21 @@ public:
     // Collect all sealed slots from sealed buffers
     for (int bi = 0; bi < 2; ++bi) {
       const Buffer &buf = bm_->buffers[bi];
-      uint8_t st = buf.state.load(std::memory_order_acquire);
-      if (st != BUFFER_STATE_SEALED) {
+      uint8_t bst = buf.state.load(std::memory_order_acquire);
+      if (bst != BUFFER_STATE_SEALED) {
         continue;
       }
       for (uint32_t i = 0; i < buf.slot_capacity; ++i) {
         const Slot &s = buf.slots[i];
-        if (s.hwm == 0) {
+        uint8_t st = s.state.load(std::memory_order_acquire);
+        if (st != SLOT_STATE_SEALED) {
           continue;
         }
-        if (s.state != SLOT_STATE_SEALED) {
+        uint16_t n = s.hwm.load(std::memory_order_acquire);
+        if (n == 0) {
           continue;
         }
-        rds.insert(rds.end(), s.recs, s.recs + s.hwm);
+        rds.insert(rds.end(), s.recs, s.recs + n);
       }
     }
 
@@ -444,7 +456,7 @@ inline void MergeWorker::sort_slot(Slot *s) {
   if (!s) {
     return;
   }
-  const uint16_t n = s->hwm;
+  const uint16_t n = s->hwm.load(std::memory_order_acquire);
   if (n <= 1) {
     return;
   }
@@ -458,7 +470,7 @@ inline void MergeWorker::route_slot(Slot *s) {
   if (!s || !tree_) {
     return;
   }
-  const uint16_t n = s->hwm;
+  const uint16_t n = s->hwm.load(std::memory_order_acquire);
   if (n == 0) {
     return;
   }
@@ -486,7 +498,7 @@ inline void route_slot_to_batches(SBTree *tree, Slot *s,
   if (!tree || !s) {
     return;
   }
-  const uint16_t n = s->hwm;
+  const uint16_t n = s->hwm.load(std::memory_order_acquire);
   if (n == 0) {
     return;
   }
@@ -520,22 +532,29 @@ inline void MergeWorker::run_once() {
   // 1) 扫描所有 SEALED buffer，把 slot 中的数据按 leaf 聚合到 leaf_batches
   for (int bi = 0; bi < 2; ++bi) {
     Buffer &buf = bm->buffers[bi];
-    uint8_t st = buf.state.load(std::memory_order_acquire);
-    if (st != BUFFER_STATE_SEALED) {
+    uint8_t bst = buf.state.load(std::memory_order_acquire);
+    if (bst != BUFFER_STATE_SEALED) {
       continue;
     }
     for (uint32_t i = 0; i < buf.slot_capacity; ++i) {
       Slot *s = &buf.slots[i];
-      if (!s || s->hwm == 0) {
+      if (!s) {
         continue;
       }
-      if (s->state != SLOT_STATE_SEALED) {
+      // 先读 state，确保看到 seal 之后再读 hwm
+      uint8_t st = s->state.load(std::memory_order_acquire);
+      if (st != SLOT_STATE_SEALED) {
+        continue;
+      }
+      uint16_t n = s->hwm.load(std::memory_order_acquire);
+      if (n == 0) {
         continue;
       }
       sort_slot(s);
       route_slot_to_batches(tree_, s, leaf_batches);
-      s->hwm = 0;
-      s->state = SLOT_STATE_CONSUMED;
+      // 这个 slot 的内容已经完全挪到 leaf_batches 里了
+      s->hwm.store(0, std::memory_order_release);
+      s->state.store(SLOT_STATE_CONSUMED, std::memory_order_release);
     }
   }
 
@@ -562,10 +581,13 @@ inline void Engine::insert(uint64_t key, uint64_t value) {
   uint32_t w = bm->current_w_idx();
 
   // Slow path: no current slot or slot is full.
-  if (s == nullptr || s->hwm >= SLOT_CAPACITY || tls_ctx.current_buf_idx != w) {
+  if (s == nullptr || s->hwm.load(std::memory_order_relaxed) >= SLOT_CAPACITY ||
+      tls_ctx.current_buf_idx != w) {
     // Seal previous slot if switching away due to full or buffer flip.
-    if (s != nullptr && (s->hwm > 0)) {
-      s->state = SLOT_STATE_SEALED;
+    if (s != nullptr && (s->hwm.load(std::memory_order_relaxed) > 0)) {
+      // 写线程结束对该 slot 写入前的最后一步：release 保证 hwm/recs 对后续
+      // 观察到 SEALED 的线程可见。
+      s->state.store(SLOT_STATE_SEALED, std::memory_order_release);
     }
     s = bm->allocate_slot();
     if (!s) {
@@ -578,8 +600,9 @@ inline void Engine::insert(uint64_t key, uint64_t value) {
     tls_ctx.current_buf_idx = w;
   }
 
-  // Fast path: append-only within SWMR slot, hwm is non-atomic.
-  uint16_t pos = s->hwm++;
+  // Fast path: append-only within SWMR slot. 使用原子 fetch_add 来递增 hwm，
+  // 但因为每个 slot 只有一个写线程，这里可以使用 relaxed 语义。
+  uint16_t pos = s->hwm.fetch_add(1, std::memory_order_relaxed);
   // Epoch is currently unused; set to 0.
   s->recs[pos] = Record{key, value, 0};
 }

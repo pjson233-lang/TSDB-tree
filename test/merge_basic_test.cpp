@@ -24,9 +24,10 @@ int main() {
     s.recs[i].value = keys[i] * 10;
     s.recs[i].epoch = 0;
   }
-  s.hwm = n;
+  s.hwm.store(n, std::memory_order_relaxed);
 
-  // Seal the buffer so worker.run_once() will process it.
+  // Seal the slot & buffer so worker.run_once() will process it.
+  s.state.store(SLOT_STATE_SEALED, std::memory_order_release);
   buf.state.store(BUFFER_STATE_SEALED, std::memory_order_release);
 
   worker.run_once();
@@ -51,5 +52,3 @@ int main() {
   std::cout << "merge_basic_test passed." << std::endl;
   return 0;
 }
-
-

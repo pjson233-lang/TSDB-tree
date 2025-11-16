@@ -31,8 +31,8 @@ int main() {
     }
     for (uint32_t si = 0; si < buf.slot_capacity; ++si) {
       Slot &s = buf.slots[si];
-      if (s.hwm > 0) {
-        s.state = SLOT_STATE_SEALED;
+      if (s.hwm.load(std::memory_order_acquire) > 0) {
+        s.state.store(SLOT_STATE_SEALED, std::memory_order_release);
       }
     }
   }
@@ -57,8 +57,8 @@ int main() {
     }
     for (uint32_t si = 0; si < buf.slot_capacity; ++si) {
       Slot &s = buf.slots[si];
-      if (s.hwm > 0) {
-        s.state = SLOT_STATE_SEALED;
+      if (s.hwm.load(std::memory_order_acquire) > 0) {
+        s.state.store(SLOT_STATE_SEALED, std::memory_order_release);
       }
     }
   }
@@ -77,5 +77,3 @@ int main() {
   std::cout << "read_fresh_test passed. total=" << all.size() << std::endl;
   return 0;
 }
-
-
