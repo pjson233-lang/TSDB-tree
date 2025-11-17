@@ -1,10 +1,10 @@
-Start testing: Nov 17 15:09 CST
+Start testing: Nov 17 15:35 CST
 ----------------------------------------------------------
 1/4 Testing: merge_basic_test
 1/4 Test: merge_basic_test
 Command: "/home/www/sbtree1/test/build/merge_basic_test"
 Directory: /home/www/sbtree1/test/build
-"merge_basic_test" start time: Nov 17 15:09 CST
+"merge_basic_test" start time: Nov 17 15:35 CST
 Output:
 ----------------------------------------------------------
 merge_basic_test passed.
@@ -12,7 +12,7 @@ merge_basic_test passed.
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"merge_basic_test" end time: Nov 17 15:09 CST
+"merge_basic_test" end time: Nov 17 15:35 CST
 "merge_basic_test" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -20,7 +20,7 @@ Test Passed.
 2/4 Test: concurrent_insert_flip_test
 Command: "/home/www/sbtree1/test/build/concurrent_insert_flip_test"
 Directory: /home/www/sbtree1/test/build
-"concurrent_insert_flip_test" start time: Nov 17 15:09 CST
+"concurrent_insert_flip_test" start time: Nov 17 15:35 CST
 Output:
 ----------------------------------------------------------
 concurrent_insert_flip_test passed. total=40000
@@ -28,7 +28,7 @@ concurrent_insert_flip_test passed. total=40000
 Test time =   0.06 sec
 ----------------------------------------------------------
 Test Passed.
-"concurrent_insert_flip_test" end time: Nov 17 15:09 CST
+"concurrent_insert_flip_test" end time: Nov 17 15:35 CST
 "concurrent_insert_flip_test" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -36,7 +36,7 @@ Test Passed.
 3/4 Test: read_fresh_test
 Command: "/home/www/sbtree1/test/build/read_fresh_test"
 Directory: /home/www/sbtree1/test/build
-"read_fresh_test" start time: Nov 17 15:09 CST
+"read_fresh_test" start time: Nov 17 15:35 CST
 Output:
 ----------------------------------------------------------
 read_fresh_test passed. total=200
@@ -44,7 +44,7 @@ read_fresh_test passed. total=200
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"read_fresh_test" end time: Nov 17 15:09 CST
+"read_fresh_test" end time: Nov 17 15:35 CST
 "read_fresh_test" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -52,7 +52,7 @@ Test Passed.
 4/4 Test: flipper_test
 Command: "/home/www/sbtree1/test/build/flipper_test"
 Directory: /home/www/sbtree1/test/build
-"flipper_test" start time: Nov 17 15:09 CST
+"flipper_test" start time: Nov 17 15:35 CST
 Output:
 ----------------------------------------------------------
 Flipper test:
@@ -61,11 +61,11 @@ Flipper test:
   Reader scan_all:  200000
 Flipper test PASSED: auto flip + merge working correctly
 <end of output>
-Test time =   0.12 sec
+Test time =   0.10 sec
 ----------------------------------------------------------
 Test Passed.
-"flipper_test" end time: Nov 17 15:09 CST
+"flipper_test" end time: Nov 17 15:35 CST
 "flipper_test" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Nov 17 15:09 CST
+End testing: Nov 17 15:35 CST

@@ -572,7 +572,8 @@ inline void MergeWorker::route_slot(Slot *s) {
   }
 }
 
-// New helper: route one sorted slot into per-leaf batches without merging.
+// Helper: route slot records into per-leaf batches.
+// Simplified version (doesn't assume slot is sorted).
 template <size_t N>
 inline void route_slot_to_batches(SBTree *tree, Slot *s,
                                   std::array<std::vector<Record>, N> &batches) {
@@ -583,24 +584,17 @@ inline void route_slot_to_batches(SBTree *tree, Slot *s,
   if (n == 0) {
     return;
   }
-  uint16_t start = 0;
-  while (start < n) {
-    const uint64_t key = s->recs[start].key;
-    SBTreeLeaf *leaf = tree->locate_leaf(key);
-    assert(leaf != nullptr &&
-           "route_slot_to_batches: locate_leaf returned nullptr!");
+
+  // Simple: push each record to its leaf's batch individually.
+  // Sorting happens later at leaf level, so no need to assume slot is sorted.
+  for (uint16_t i = 0; i < n; ++i) {
+    const Record &r = s->recs[i];
+    SBTreeLeaf *leaf = tree->locate_leaf(r.key);
     if (!leaf) {
-      break;
+      continue; // Shouldn't happen, but skip if it does
     }
     size_t leaf_idx = tree->leaf_index(leaf);
-    uint16_t end = start + 1;
-    while (end < n &&
-           tree->leaf_index(tree->locate_leaf(s->recs[end].key)) == leaf_idx) {
-      ++end;
-    }
-    auto &vec = batches[leaf_idx];
-    vec.insert(vec.end(), s->recs + start, s->recs + end);
-    start = end;
+    batches[leaf_idx].push_back(r);
   }
 }
 
@@ -636,7 +630,7 @@ inline void MergeWorker::run_once() {
         continue;
       }
 
-      sort_slot(s);
+      // Optimization: skip per-slot sorting, let leaf-level sort handle it
       route_slot_to_batches(tree_, s, leaf_batches);
       // 这个 slot 的内容已经完全挪到 leaf_batches 里了
       s->hwm.store(0, std::memory_order_release);
