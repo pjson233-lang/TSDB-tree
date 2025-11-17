@@ -28,3 +28,9 @@ add_executable(read_fresh_test
 
 add_test(NAME read_fresh_test COMMAND read_fresh_test)
 
+add_executable(flipper_test
+  flipper_test.cpp
+)
+
+add_test(NAME flipper_test COMMAND flipper_test)
+

@@ -305,14 +305,21 @@ private:
 
 class SBTreeLeaf {
 public:
-  SBTreeLeaf() = default;
+  SBTreeLeaf() : min_key_(UINT64_MAX), max_key_(0) {}
+
   void merge_runs(const std::vector<Record> &newrun);
 
   // testing helper
   const std::vector<Record> &data() const { return data_; }
 
+  // range query support
+  uint64_t min_key() const { return min_key_; }
+  uint64_t max_key() const { return max_key_; }
+
 private:
   std::vector<Record> data_;
+  uint64_t min_key_; // 最小 key（用于 range 查询）
+  uint64_t max_key_; // 最大 key（用于 range 查询）
 };
 
 class SBTree {
@@ -376,17 +383,31 @@ class Reader {
 public:
   Reader(BufferManager *bm, SBTree *tree) : bm_(bm), tree_(tree) {}
 
-  // Full scan for testing freshness: merge Tree data with current SEALED RDS.
+  // Full scan for testing freshness: merge Tree data from ALL leaves with
+  // current SEALED RDS.
   std::vector<Record> scan_all() const {
     std::vector<Record> result;
     if (!bm_ || !tree_) {
       return result;
     }
 
-    const std::vector<Record> &tree_data = tree_->root_leaf()->data();
+    // 1) 从 Tree 的所有 leaf 聚合数据
+    std::vector<Record> tree_data;
+    for (size_t li = 0; li < tree_->leaf_count(); ++li) {
+      const SBTreeLeaf *leaf = tree_->leaf_at(li);
+      if (leaf) {
+        const auto &leaf_data = leaf->data();
+        tree_data.insert(tree_data.end(), leaf_data.begin(), leaf_data.end());
+      }
+    }
+    // Tree 数据已经是各 leaf 内部有序的，现在需要全局排序
+    if (!tree_data.empty()) {
+      std::sort(tree_data.begin(), tree_data.end(),
+                [](const Record &a, const Record &b) { return a.key < b.key; });
+    }
 
+    // 2) 从 RDS（sealed buffer 中的 sealed slot）聚合数据
     std::vector<Record> rds;
-    // Collect all sealed slots from sealed buffers
     for (int bi = 0; bi < 2; ++bi) {
       const Buffer &buf = bm_->buffers[bi];
       uint8_t bst = buf.state.load(std::memory_order_acquire);
@@ -406,13 +427,12 @@ public:
         rds.insert(rds.end(), s.recs, s.recs + n);
       }
     }
-
     if (!rds.empty()) {
       std::sort(rds.begin(), rds.end(),
                 [](const Record &a, const Record &b) { return a.key < b.key; });
     }
 
-    // Two-way merge (both inputs sorted)
+    // 3) 两路合并 Tree 和 RDS（都已排序）
     result.reserve(tree_data.size() + rds.size());
     size_t i = 0, j = 0;
     while (i < tree_data.size() && j < rds.size()) {
@@ -499,6 +519,15 @@ inline void SBTreeLeaf::merge_runs(const std::vector<Record> &newrun) {
   size_t after_size = merged.size();
 
   data_.swap(merged);
+
+  // 维护 min_key_ 和 max_key_ 用于 range 查询
+  if (!data_.empty()) {
+    min_key_ = data_.front().key;
+    max_key_ = data_.back().key;
+  } else {
+    min_key_ = UINT64_MAX;
+    max_key_ = 0;
+  }
 }
 
 inline MergeWorker::MergeWorker(BufferManager *mgr, SBTree *tree)
@@ -670,6 +699,77 @@ inline void Engine::insert(uint64_t key, uint64_t value) {
   // 写入数据（对 merge/flush 可见，因为前面的 append_pos 建立全序）
   s->recs[pos] = Record{key, value, 0};
 }
+
+// =========================
+// Background Flipper Thread
+// =========================
+
+class Flipper {
+public:
+  // 构造函数：接收 buffer manager、tree、以及 flip 间隔（毫秒）
+  Flipper(BufferManager *bm, SBTree *tree, uint32_t flip_interval_ms = 10)
+      : bm_(bm), tree_(tree), flip_interval_ms_(flip_interval_ms),
+        running_(false), worker_thread_(nullptr) {}
+
+  ~Flipper() {
+    if (running_) {
+      stop();
+    }
+  }
+
+  // 启动后台 flipper 线程
+  void start() {
+    if (running_) {
+      return; // 已经在运行
+    }
+    running_.store(true, std::memory_order_release);
+    worker_thread_ = std::make_unique<std::thread>([this]() { this->run(); });
+  }
+
+  // 停止后台 flipper 线程
+  void stop() {
+    if (!running_) {
+      return;
+    }
+    running_.store(false, std::memory_order_release);
+    if (worker_thread_ && worker_thread_->joinable()) {
+      worker_thread_->join();
+    }
+    worker_thread_.reset();
+  }
+
+  // 等待线程结束（可选，主要用于测试/shutdown）
+  void join() {
+    if (worker_thread_ && worker_thread_->joinable()) {
+      worker_thread_->join();
+    }
+  }
+
+private:
+  BufferManager *bm_;
+  SBTree *tree_;
+  uint32_t flip_interval_ms_;
+  std::atomic<bool> running_;
+  std::unique_ptr<std::thread> worker_thread_;
+
+  // 后台线程主循环
+  void run() {
+    while (running_.load(std::memory_order_acquire)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(flip_interval_ms_));
+
+      if (!running_.load(std::memory_order_acquire)) {
+        break;
+      }
+
+      // 执行一次 flip + merge 周期
+      if (bm_ && tree_) {
+        bm_->flip_buffers();
+        MergeWorker mw(bm_, tree_);
+        mw.run_once();
+      }
+    }
+  }
+};
 
 // Flush all WRITING slots into SEALED state and run one merge pass.
 // 典型用途：系统 shutdown 之前调用一次，保证所有尾部数据都 merge 到 Tree。

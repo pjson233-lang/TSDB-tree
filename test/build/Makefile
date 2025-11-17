@@ -165,6 +165,19 @@ read_fresh_test/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/read_fresh_test.dir/build.make CMakeFiles/read_fresh_test.dir/build
 .PHONY : read_fresh_test/fast
 
+#=============================================================================
+# Target rules for targets named flipper_test
+
+# Build rule for target.
+flipper_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 flipper_test
+.PHONY : flipper_test
+
+# fast build rule for target.
+flipper_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/flipper_test.dir/build.make CMakeFiles/flipper_test.dir/build
+.PHONY : flipper_test/fast
+
 concurrent_insert_flip_test.o: concurrent_insert_flip_test.cpp.o
 .PHONY : concurrent_insert_flip_test.o
 
@@ -188,6 +201,30 @@ concurrent_insert_flip_test.s: concurrent_insert_flip_test.cpp.s
 concurrent_insert_flip_test.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/concurrent_insert_flip_test.dir/build.make CMakeFiles/concurrent_insert_flip_test.dir/concurrent_insert_flip_test.cpp.s
 .PHONY : concurrent_insert_flip_test.cpp.s
+
+flipper_test.o: flipper_test.cpp.o
+.PHONY : flipper_test.o
+
+# target to build an object file
+flipper_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/flipper_test.dir/build.make CMakeFiles/flipper_test.dir/flipper_test.cpp.o
+.PHONY : flipper_test.cpp.o
+
+flipper_test.i: flipper_test.cpp.i
+.PHONY : flipper_test.i
+
+# target to preprocess a source file
+flipper_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/flipper_test.dir/build.make CMakeFiles/flipper_test.dir/flipper_test.cpp.i
+.PHONY : flipper_test.cpp.i
+
+flipper_test.s: flipper_test.cpp.s
+.PHONY : flipper_test.s
+
+# target to generate assembly for a file
+flipper_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/flipper_test.dir/build.make CMakeFiles/flipper_test.dir/flipper_test.cpp.s
+.PHONY : flipper_test.cpp.s
 
 merge_basic_test.o: merge_basic_test.cpp.o
 .PHONY : merge_basic_test.o
@@ -247,11 +284,15 @@ help:
 	@echo "... rebuild_cache"
 	@echo "... test"
 	@echo "... concurrent_insert_flip_test"
+	@echo "... flipper_test"
 	@echo "... merge_basic_test"
 	@echo "... read_fresh_test"
 	@echo "... concurrent_insert_flip_test.o"
 	@echo "... concurrent_insert_flip_test.i"
 	@echo "... concurrent_insert_flip_test.s"
+	@echo "... flipper_test.o"
+	@echo "... flipper_test.i"
+	@echo "... flipper_test.s"
 	@echo "... merge_basic_test.o"
 	@echo "... merge_basic_test.i"
 	@echo "... merge_basic_test.s"

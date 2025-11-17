@@ -10,3 +10,5 @@ add_test(concurrent_insert_flip_test "/home/www/sbtree1/test/build/concurrent_in
 set_tests_properties(concurrent_insert_flip_test PROPERTIES  _BACKTRACE_TRIPLES "/home/www/sbtree1/test/CMakeLists.txt;23;add_test;/home/www/sbtree1/test/CMakeLists.txt;0;")
 add_test(read_fresh_test "/home/www/sbtree1/test/build/read_fresh_test")
 set_tests_properties(read_fresh_test PROPERTIES  _BACKTRACE_TRIPLES "/home/www/sbtree1/test/CMakeLists.txt;29;add_test;/home/www/sbtree1/test/CMakeLists.txt;0;")
+add_test(flipper_test "/home/www/sbtree1/test/build/flipper_test")
+set_tests_properties(flipper_test PROPERTIES  _BACKTRACE_TRIPLES "/home/www/sbtree1/test/CMakeLists.txt;35;add_test;/home/www/sbtree1/test/CMakeLists.txt;0;")
