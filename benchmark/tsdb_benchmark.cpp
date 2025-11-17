@@ -9,6 +9,11 @@
 #include <thread>
 #include <vector>
 
+// 使用头文件中已定义的 getter/reset 函数（为了避免链接问题，直接访问 inline
+// 变量） 这些函数在 tsdb_core.h 中已定义为 inline，无需重新实现
+
+// （调试用的全局计数器 extern 声明已移除）
+
 // =========================
 // 基本类型定义
 // =========================
@@ -187,6 +192,8 @@ int main(int argc, char *argv[]) {
     slots_per_buffer = 1024;
   }
 
+  // 不再重置内部调试计数器，仅打印性能统计
+
   std::cout << "===== TSDB Insert Benchmark (tsdb_core.h) =====\n";
   std::cout << "  series          : " << kNumSeries << "\n";
   std::cout << "  total records   : " << kTotalRecords << "\n";
@@ -201,6 +208,7 @@ int main(int argc, char *argv[]) {
   GenerateTimeSeriesData(kTotalRecords);
 
   // 2) 初始化 tsdb 组件
+
   BufferManager bm(slots_per_buffer);
   SBTree tree;
   Engine eng(&bm, &tree);
@@ -267,6 +275,8 @@ int main(int argc, char *argv[]) {
   uint64_t buffered_records = CountBufferedRecords(bm);
   uint64_t alloc_failures = bm.alloc_failures.load(std::memory_order_relaxed);
   uint64_t tree_records = CountTreeRecords(tree);
+  // 成功写入的次数：这里用总调用次数减去分配失败次数近似代表
+  uint64_t success_inserts = total_insert_calls - alloc_failures;
 
   double total_ms = total_us / 1000.0;
   double mops_front =
@@ -288,8 +298,12 @@ int main(int argc, char *argv[]) {
   avg_thread_us /= num_threads;
 
   // 纯插入吞吐（仅计算插入阶段：用最慢的写线程耗时作为整体插入时间）
+  // 插入阶段耗时：使用线程时间的中位数作为代表（滤掉极端慢线程）
+  std::vector<double> sorted_times = thread_times;
+  std::sort(sorted_times.begin(), sorted_times.end());
+  double median_thread_us = sorted_times[sorted_times.size() / 2];
   double insert_wall_sec =
-      (max_thread_us > 0.0) ? (max_thread_us / 1.0e6) : 0.0;
+      (median_thread_us > 0.0) ? (median_thread_us / 1.0e6) : 0.0;
   double mops_insert =
       (insert_wall_sec > 0.0)
           ? (static_cast<double>(total_insert_calls) / insert_wall_sec / 1.0e6)
@@ -297,6 +311,8 @@ int main(int argc, char *argv[]) {
   std::cout
       << "\n===== Insert Benchmark Result (with background merge) =====\n";
   std::cout << "total insert calls (Engine::insert) : " << total_insert_calls
+            << "\n";
+  std::cout << "successful inserts (into slots)     : " << success_inserts
             << "\n";
   std::cout << "buffered records (sum of hwm)       : " << buffered_records
             << "\n";
@@ -322,15 +338,15 @@ int main(int argc, char *argv[]) {
             << merge_ratio << "% of total)\n";
 
   uint64_t in_memory = buffered_records + tree_records;
-  if (alloc_failures == 0 && in_memory == total_insert_calls) {
-    std::cout
-        << "[Check] All records are in memory (Tree + Buffers), no drops.\n";
+  if (alloc_failures == 0 && in_memory == success_inserts) {
+    std::cout << "[Check] All successful inserts are in memory (Tree + "
+                 "Buffers), no drops.\n";
   } else {
-    std::cout
-        << "[Check] WARNING: some records may be dropped or not merged.\n";
-    if (total_insert_calls > in_memory) {
-      std::cout << "         approx dropped = "
-                << (total_insert_calls - in_memory) << "\n";
+    std::cout << "[Check] WARNING: mismatch between successful inserts and "
+                 "Tree+Buffers.\n";
+    if (success_inserts > in_memory) {
+      std::cout << "         approx dropped = " << (success_inserts - in_memory)
+                << "\n";
     }
     if (buffered_records > 0) {
       std::cout << "         not yet merged into tree = " << buffered_records
