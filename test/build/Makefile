@@ -191,6 +191,19 @@ range_query_test/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/range_query_test.dir/build.make CMakeFiles/range_query_test.dir/build
 .PHONY : range_query_test/fast
 
+#=============================================================================
+# Target rules for targets named perf_test
+
+# Build rule for target.
+perf_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 perf_test
+.PHONY : perf_test
+
+# fast build rule for target.
+perf_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/perf_test.dir/build.make CMakeFiles/perf_test.dir/build
+.PHONY : perf_test/fast
+
 concurrent_insert_flip_test.o: concurrent_insert_flip_test.cpp.o
 .PHONY : concurrent_insert_flip_test.o
 
@@ -263,6 +276,30 @@ merge_basic_test.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/merge_basic_test.dir/build.make CMakeFiles/merge_basic_test.dir/merge_basic_test.cpp.s
 .PHONY : merge_basic_test.cpp.s
 
+perf_test.o: perf_test.cpp.o
+.PHONY : perf_test.o
+
+# target to build an object file
+perf_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/perf_test.dir/build.make CMakeFiles/perf_test.dir/perf_test.cpp.o
+.PHONY : perf_test.cpp.o
+
+perf_test.i: perf_test.cpp.i
+.PHONY : perf_test.i
+
+# target to preprocess a source file
+perf_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/perf_test.dir/build.make CMakeFiles/perf_test.dir/perf_test.cpp.i
+.PHONY : perf_test.cpp.i
+
+perf_test.s: perf_test.cpp.s
+.PHONY : perf_test.s
+
+# target to generate assembly for a file
+perf_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/perf_test.dir/build.make CMakeFiles/perf_test.dir/perf_test.cpp.s
+.PHONY : perf_test.cpp.s
+
 range_query_test.o: range_query_test.cpp.o
 .PHONY : range_query_test.o
 
@@ -323,6 +360,7 @@ help:
 	@echo "... concurrent_insert_flip_test"
 	@echo "... flipper_test"
 	@echo "... merge_basic_test"
+	@echo "... perf_test"
 	@echo "... range_query_test"
 	@echo "... read_fresh_test"
 	@echo "... concurrent_insert_flip_test.o"
@@ -334,6 +372,9 @@ help:
 	@echo "... merge_basic_test.o"
 	@echo "... merge_basic_test.i"
 	@echo "... merge_basic_test.s"
+	@echo "... perf_test.o"
+	@echo "... perf_test.i"
+	@echo "... perf_test.s"
 	@echo "... range_query_test.o"
 	@echo "... range_query_test.i"
 	@echo "... range_query_test.s"

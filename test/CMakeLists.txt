@@ -40,3 +40,9 @@ add_executable(range_query_test
 
 add_test(NAME range_query_test COMMAND range_query_test)
 
+add_executable(perf_test
+  perf_test.cpp
+)
+
+add_test(NAME perf_test COMMAND perf_test 1000000 16)
+

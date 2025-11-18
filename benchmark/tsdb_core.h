@@ -18,6 +18,22 @@ static constexpr uint32_t SLOT_SIZE_BYTES = 16 * 1024; // 16KB
 static constexpr uint32_t RECORD_SIZE = 24;            // typical
 static constexpr uint32_t MAX_SLOTS = 1 << 20;         // configurable
 
+// ===== Consistency / Performance Switch =====
+// 1  = 强一致（默认，用于单测 / 生产逻辑）
+// 0  = 偏性能（允许 benchmark 里关闭重栅栏）
+#ifndef TSDB_STRICT_CONSISTENCY
+#define TSDB_STRICT_CONSISTENCY 1
+#endif
+
+#if TSDB_STRICT_CONSISTENCY
+#define TSDB_FENCE_BEFORE_SEAL()                                               \
+  std::atomic_thread_fence(std::memory_order_seq_cst)
+#else
+#define TSDB_FENCE_BEFORE_SEAL()                                               \
+  do { /* no-op in perf mode */                                                \
+  } while (0)
+#endif
+
 // =========================
 // Record
 // =========================
@@ -244,10 +260,8 @@ inline void BufferManager::flip_buffers() {
   uint32_t old = w_idx.load(std::memory_order_relaxed);
   uint32_t next = old ^ 1u;
 
-  // P0 Correctness Fix: seq_cst fence before flipping to ensure all writer's
-  // pending record writes are flushed to main memory before we seal the old
-  // buffer and allow merger to start processing it.
-  std::atomic_thread_fence(std::memory_order_seq_cst);
+  // P0 Correctness Fix: fence (controlled by TSDB_STRICT_CONSISTENCY)
+  TSDB_FENCE_BEFORE_SEAL();
 
   // Flip active write buffer index (single atomic store on hot path).
   w_idx.store(next, std::memory_order_release);
@@ -270,9 +284,8 @@ inline void BufferManager::seal_all_slots_for_flush() {
       uint16_t h = s.size_acquire(); // Use size_acquire() helper
       // 收尾时：只要还有数据且未被消费的 slot，都应当标记为已封口
       if (h > 0 && st != SLOT_STATE_CONSUMED) {
-        // P0 Correctness Fix: Use seq_cst fence before sealing to ensure all
-        // record writes are visible to merger thread.
-        std::atomic_thread_fence(std::memory_order_seq_cst);
+        // P0 Correctness Fix: fence (controlled by TSDB_STRICT_CONSISTENCY)
+        TSDB_FENCE_BEFORE_SEAL();
         s.state.store(SLOT_STATE_SEALED, std::memory_order_release);
       }
     }
@@ -743,9 +756,8 @@ inline void MergeWorker::run_once() {
         continue;
       }
 
-      // P0 Correctness Fix: seq_cst fence before reading recs to ensure all
-      // writer's record writes are visible to us.
-      std::atomic_thread_fence(std::memory_order_seq_cst);
+      // P0 Correctness Fix: fence (controlled by TSDB_STRICT_CONSISTENCY)
+      TSDB_FENCE_BEFORE_SEAL();
 
       uint16_t n = s->hwm.load(std::memory_order_acquire);
       if (n == 0) {
@@ -766,15 +778,34 @@ inline void MergeWorker::run_once() {
   }
 
   // 2) 对每个 leaf 的 batch sort 一次，然后 merge_runs 一次
+  // === 优化：并行处理每个 leaf 的 merge ===
+  std::vector<std::thread> merge_workers;
+
+  // 先收集所有需要处理的 leaf index
+  std::vector<size_t> leaf_indices_to_merge;
   for (size_t leaf_idx = 0; leaf_idx < kLeafCount; ++leaf_idx) {
-    auto &batch = leaf_batches[leaf_idx];
-    if (batch.empty()) {
-      continue;
+    if (!leaf_batches[leaf_idx].empty()) {
+      leaf_indices_to_merge.push_back(leaf_idx);
     }
-    std::sort(batch.begin(), batch.end(),
-              [](const Record &a, const Record &b) { return a.key < b.key; });
-    SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
-    tree_->merge_run_into_leaf(leaf, batch);
+  }
+
+  // 为每个需要处理的 leaf 启动一个线程
+  for (size_t leaf_idx : leaf_indices_to_merge) {
+    merge_workers.emplace_back([this, leaf_idx, &leaf_batches]() {
+      // 1) 对该 leaf 的 batch 排序
+      auto &batch = leaf_batches[leaf_idx];
+      std::sort(batch.begin(), batch.end(),
+                [](const Record &a, const Record &b) { return a.key < b.key; });
+
+      // 2) 将排序后的 batch merge 到对应的 leaf
+      SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
+      tree_->merge_run_into_leaf(leaf, batch);
+    });
+  }
+
+  // 等待所有 leaf merge 线程完成
+  for (auto &worker : merge_workers) {
+    worker.join();
   }
 }
 
@@ -796,11 +827,8 @@ inline void Engine::insert(uint64_t key, uint64_t value) {
     // Seal previous slot if switching away due to full or buffer flip.
     // Only seal if it has data (to avoid SEALED empty slots)
     if (s != nullptr && s->size_acquire() > 0) {
-      // P0 Correctness Fix: Use seq_cst fence before sealing to ensure all
-      // record writes (recs[pos] = ...) are visible to merger thread.
-      // This guarantees that when merger sees state==SEALED and reads hwm,
-      // all recs are fully written and visible.
-      std::atomic_thread_fence(std::memory_order_seq_cst);
+      // P0 Correctness Fix: fence (controlled by TSDB_STRICT_CONSISTENCY)
+      TSDB_FENCE_BEFORE_SEAL();
       s->state.store(SLOT_STATE_SEALED, std::memory_order_release);
     }
     s = bm->allocate_slot();

@@ -3,6 +3,7 @@
 /home/www/sbtree1/test/build/CMakeFiles/read_fresh_test.dir
 /home/www/sbtree1/test/build/CMakeFiles/flipper_test.dir
 /home/www/sbtree1/test/build/CMakeFiles/range_query_test.dir
+/home/www/sbtree1/test/build/CMakeFiles/perf_test.dir
 /home/www/sbtree1/test/build/CMakeFiles/test.dir
 /home/www/sbtree1/test/build/CMakeFiles/edit_cache.dir
 /home/www/sbtree1/test/build/CMakeFiles/rebuild_cache.dir
