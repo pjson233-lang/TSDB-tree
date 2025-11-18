@@ -43,4 +43,5 @@ set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/concurrent_insert_flip_test.dir/DependInfo.cmake"
   "CMakeFiles/read_fresh_test.dir/DependInfo.cmake"
   "CMakeFiles/flipper_test.dir/DependInfo.cmake"
+  "CMakeFiles/range_query_test.dir/DependInfo.cmake"
   )

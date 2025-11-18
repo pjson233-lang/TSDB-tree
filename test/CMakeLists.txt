@@ -34,3 +34,9 @@ add_executable(flipper_test
 
 add_test(NAME flipper_test COMMAND flipper_test)
 
+add_executable(range_query_test
+  range_query_test.cpp
+)
+
+add_test(NAME range_query_test COMMAND range_query_test)
+

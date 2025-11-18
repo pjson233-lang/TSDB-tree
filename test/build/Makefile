@@ -178,6 +178,19 @@ flipper_test/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/flipper_test.dir/build.make CMakeFiles/flipper_test.dir/build
 .PHONY : flipper_test/fast
 
+#=============================================================================
+# Target rules for targets named range_query_test
+
+# Build rule for target.
+range_query_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 range_query_test
+.PHONY : range_query_test
+
+# fast build rule for target.
+range_query_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/range_query_test.dir/build.make CMakeFiles/range_query_test.dir/build
+.PHONY : range_query_test/fast
+
 concurrent_insert_flip_test.o: concurrent_insert_flip_test.cpp.o
 .PHONY : concurrent_insert_flip_test.o
 
@@ -250,6 +263,30 @@ merge_basic_test.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/merge_basic_test.dir/build.make CMakeFiles/merge_basic_test.dir/merge_basic_test.cpp.s
 .PHONY : merge_basic_test.cpp.s
 
+range_query_test.o: range_query_test.cpp.o
+.PHONY : range_query_test.o
+
+# target to build an object file
+range_query_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/range_query_test.dir/build.make CMakeFiles/range_query_test.dir/range_query_test.cpp.o
+.PHONY : range_query_test.cpp.o
+
+range_query_test.i: range_query_test.cpp.i
+.PHONY : range_query_test.i
+
+# target to preprocess a source file
+range_query_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/range_query_test.dir/build.make CMakeFiles/range_query_test.dir/range_query_test.cpp.i
+.PHONY : range_query_test.cpp.i
+
+range_query_test.s: range_query_test.cpp.s
+.PHONY : range_query_test.s
+
+# target to generate assembly for a file
+range_query_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/range_query_test.dir/build.make CMakeFiles/range_query_test.dir/range_query_test.cpp.s
+.PHONY : range_query_test.cpp.s
+
 read_fresh_test.o: read_fresh_test.cpp.o
 .PHONY : read_fresh_test.o
 
@@ -286,6 +323,7 @@ help:
 	@echo "... concurrent_insert_flip_test"
 	@echo "... flipper_test"
 	@echo "... merge_basic_test"
+	@echo "... range_query_test"
 	@echo "... read_fresh_test"
 	@echo "... concurrent_insert_flip_test.o"
 	@echo "... concurrent_insert_flip_test.i"
@@ -296,6 +334,9 @@ help:
 	@echo "... merge_basic_test.o"
 	@echo "... merge_basic_test.i"
 	@echo "... merge_basic_test.s"
+	@echo "... range_query_test.o"
+	@echo "... range_query_test.i"
+	@echo "... range_query_test.s"
 	@echo "... read_fresh_test.o"
 	@echo "... read_fresh_test.i"
 	@echo "... read_fresh_test.s"

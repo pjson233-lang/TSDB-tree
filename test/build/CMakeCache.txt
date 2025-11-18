@@ -192,15 +192,6 @@ tsdb_sbtree_tests_IS_TOP_LEVEL:STATIC=ON
 //Value Computed by CMake
 tsdb_sbtree_tests_SOURCE_DIR:STATIC=/home/www/sbtree1/test
 
-//Value Computed by CMake
-tsdb_tests_BINARY_DIR:STATIC=/home/www/sbtree1/test/build
-
-//Value Computed by CMake
-tsdb_tests_IS_TOP_LEVEL:STATIC=ON
-
-//Value Computed by CMake
-tsdb_tests_SOURCE_DIR:STATIC=/home/www/sbtree1/test
-
 
 ########################
 # INTERNAL cache entries

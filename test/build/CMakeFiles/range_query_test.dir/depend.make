@@ -1,2 +1,2 @@
-# Empty dependencies file for sort_slot_test.
+# Empty dependencies file for range_query_test.
 # This may be replaced when dependencies are built.

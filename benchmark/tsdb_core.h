@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib> // aligned_alloc, free
 #include <functional>
+#include <limits> // for std::numeric_limits
 #include <thread>
 #include <vector>
 
@@ -243,6 +244,11 @@ inline void BufferManager::flip_buffers() {
   uint32_t old = w_idx.load(std::memory_order_relaxed);
   uint32_t next = old ^ 1u;
 
+  // P0 Correctness Fix: seq_cst fence before flipping to ensure all writer's
+  // pending record writes are flushed to main memory before we seal the old
+  // buffer and allow merger to start processing it.
+  std::atomic_thread_fence(std::memory_order_seq_cst);
+
   // Flip active write buffer index (single atomic store on hot path).
   w_idx.store(next, std::memory_order_release);
 
@@ -264,6 +270,9 @@ inline void BufferManager::seal_all_slots_for_flush() {
       uint16_t h = s.size_acquire(); // Use size_acquire() helper
       // 收尾时：只要还有数据且未被消费的 slot，都应当标记为已封口
       if (h > 0 && st != SLOT_STATE_CONSUMED) {
+        // P0 Correctness Fix: Use seq_cst fence before sealing to ensure all
+        // record writes are visible to merger thread.
+        std::atomic_thread_fence(std::memory_order_seq_cst);
         s.state.store(SLOT_STATE_SEALED, std::memory_order_release);
       }
     }
@@ -305,7 +314,9 @@ private:
 
 class SBTreeLeaf {
 public:
-  SBTreeLeaf() : min_key_(UINT64_MAX), max_key_(0) {}
+  // min_key_ = UINT64_MAX, max_key_ = 0 indicates empty leaf (no data yet).
+  // After first merge, min_key_ and max_key_ will be set to valid values.
+  SBTreeLeaf() : min_key_(std::numeric_limits<uint64_t>::max()), max_key_(0) {}
 
   void merge_runs(const std::vector<Record> &newrun);
 
@@ -385,7 +396,15 @@ public:
 
   // Full scan for testing freshness: merge Tree data from ALL leaves with
   // current SEALED RDS.
-  std::vector<Record> scan_all() const {
+  std::vector<Record> scan_all() const;
+
+  // Range query: return records with key in [key_lo, key_hi].
+  // Queries both Tree (using leaf min/max for pruning) and RDS.
+  std::vector<Record> range_query(uint64_t key_lo, uint64_t key_hi) const;
+
+private:
+  // Implementation of scan_all (moved to inline function below)
+  std::vector<Record> scan_all_impl() const {
     std::vector<Record> result;
     if (!bm_ || !tree_) {
       return result;
@@ -458,6 +477,103 @@ private:
 };
 
 // =========================
+// Reader Inline Implementations
+// =========================
+
+inline std::vector<Record> Reader::scan_all() const { return scan_all_impl(); }
+
+inline std::vector<Record> Reader::range_query(uint64_t key_lo,
+                                               uint64_t key_hi) const {
+  std::vector<Record> tree_part;
+  std::vector<Record> rds_part;
+
+  if (!tree_) {
+    return {};
+  }
+
+  // === Tree part: use leaf min/max for pruning, binary search within range ===
+  const size_t leaf_cnt = tree_->leaf_count();
+  for (size_t li = 0; li < leaf_cnt; ++li) {
+    const SBTreeLeaf *leaf = tree_->leaf_at(li);
+    if (!leaf)
+      continue;
+
+    const auto &data = leaf->data();
+    if (data.empty())
+      continue;
+
+    // Quick prune: no overlap with [key_lo, key_hi]
+    // Skip if leaf is completely below key_lo or completely above key_hi
+    // (Note: empty leaves have min_key=UINT64_MAX, max_key=0, which doesn't
+    // enter this condition)
+    if (leaf->max_key() < key_lo || leaf->min_key() > key_hi) {
+      continue;
+    }
+
+    // Linear scan within leaf to find [key_lo, key_hi] (simpler and correct)
+    for (const auto &r : data) {
+      if (r.key >= key_lo && r.key <= key_hi) {
+        tree_part.push_back(r);
+      }
+    }
+  }
+
+  // === RDS part: linear scan with filter ===
+  if (bm_) {
+    for (int bi = 0; bi < 2; ++bi) {
+      const Buffer &buf = bm_->buffers[bi];
+      uint8_t bst = buf.state.load(std::memory_order_acquire);
+      if (bst != BUFFER_STATE_SEALED)
+        continue;
+
+      for (uint32_t si = 0; si < buf.slot_capacity; ++si) {
+        const Slot &s = buf.slots[si];
+        uint8_t st = s.state.load(std::memory_order_acquire);
+        if (st != SLOT_STATE_SEALED)
+          continue;
+
+        uint16_t n = s.hwm.load(std::memory_order_acquire);
+        if (n == 0)
+          continue;
+
+        const Record *base = s.recs;
+        for (uint16_t i = 0; i < n; ++i) {
+          const auto &r = base[i];
+          if (r.key >= key_lo && r.key <= key_hi) {
+            rds_part.push_back(r);
+          }
+        }
+      }
+    }
+  }
+
+  // Sort RDS part to ensure it's ordered
+  std::sort(rds_part.begin(), rds_part.end(),
+            [](const Record &a, const Record &b) { return a.key < b.key; });
+
+  // === Merge tree_part and rds_part (both sorted) ===
+  std::vector<Record> out;
+  out.reserve(tree_part.size() + rds_part.size());
+
+  size_t i = 0, j = 0;
+  while (i < tree_part.size() && j < rds_part.size()) {
+    if (tree_part[i].key <= rds_part[j].key) {
+      out.push_back(tree_part[i++]);
+    } else {
+      out.push_back(rds_part[j++]);
+    }
+  }
+  while (i < tree_part.size()) {
+    out.push_back(tree_part[i++]);
+  }
+  while (j < rds_part.size()) {
+    out.push_back(rds_part[j++]);
+  }
+
+  return out;
+}
+
+// =========================
 // Engine Inline Implementations
 // =========================
 
@@ -525,7 +641,7 @@ inline void SBTreeLeaf::merge_runs(const std::vector<Record> &newrun) {
     min_key_ = data_.front().key;
     max_key_ = data_.back().key;
   } else {
-    min_key_ = UINT64_MAX;
+    min_key_ = std::numeric_limits<uint64_t>::max();
     max_key_ = 0;
   }
 }
@@ -574,6 +690,8 @@ inline void MergeWorker::route_slot(Slot *s) {
 
 // Helper: route slot records into per-leaf batches.
 // Simplified version (doesn't assume slot is sorted).
+// IMPORTANT: Must be called after the caller has ensured state==SEALED
+// with acquire semantics and posted a seq_cst fence.
 template <size_t N>
 inline void route_slot_to_batches(SBTree *tree, Slot *s,
                                   std::array<std::vector<Record>, N> &batches) {
@@ -625,6 +743,10 @@ inline void MergeWorker::run_once() {
         continue;
       }
 
+      // P0 Correctness Fix: seq_cst fence before reading recs to ensure all
+      // writer's record writes are visible to us.
+      std::atomic_thread_fence(std::memory_order_seq_cst);
+
       uint16_t n = s->hwm.load(std::memory_order_acquire);
       if (n == 0) {
         continue;
@@ -674,6 +796,11 @@ inline void Engine::insert(uint64_t key, uint64_t value) {
     // Seal previous slot if switching away due to full or buffer flip.
     // Only seal if it has data (to avoid SEALED empty slots)
     if (s != nullptr && s->size_acquire() > 0) {
+      // P0 Correctness Fix: Use seq_cst fence before sealing to ensure all
+      // record writes (recs[pos] = ...) are visible to merger thread.
+      // This guarantees that when merger sees state==SEALED and reads hwm,
+      // all recs are fully written and visible.
+      std::atomic_thread_fence(std::memory_order_seq_cst);
       s->state.store(SLOT_STATE_SEALED, std::memory_order_release);
     }
     s = bm->allocate_slot();

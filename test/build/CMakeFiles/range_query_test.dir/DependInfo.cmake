@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/home/www/sbtree1/test/basic_insert_test.cpp" "CMakeFiles/basic_insert_test.dir/basic_insert_test.cpp.o" "gcc" "CMakeFiles/basic_insert_test.dir/basic_insert_test.cpp.o.d"
+  "/home/www/sbtree1/test/range_query_test.cpp" "CMakeFiles/range_query_test.dir/range_query_test.cpp.o" "gcc" "CMakeFiles/range_query_test.dir/range_query_test.cpp.o.d"
   )
 
 # Targets to which this target links.
