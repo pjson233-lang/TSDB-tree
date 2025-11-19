@@ -183,6 +183,15 @@ int main(int argc, char *argv[]) {
       num_threads = t;
     }
   }
+
+  // 可选参数 2：flip 间隔（毫秒），用于实验不同 flip 频率的影响
+  int flip_interval_ms = 10;
+  if (argc >= 3) {
+    int v = std::atoi(argv[2]);
+    if (v > 0 && v <= 1000) {
+      flip_interval_ms = v;
+    }
+  }
   // 动态估算 slots_per_buffer：ceil(total_records / SLOT_CAPACITY) + threads*2
   uint32_t slots_per_buffer =
       static_cast<uint32_t>((kTotalRecords + SLOT_CAPACITY - 1) /
@@ -214,10 +223,10 @@ int main(int argc, char *argv[]) {
   Engine eng(&bm, &tree);
   MergeWorker worker(&bm, &tree);
   std::cout << "[Init] BufferManager + Engine constructed.\n";
+  std::cout << "  flip interval   : " << flip_interval_ms << " ms\n";
 
   // 3) 启动维护线程：周期性 flip + merge（端到端路径）
   std::atomic<bool> keep_flipping{true};
-  constexpr int kFlipIntervalMs = 10;
   uint64_t merge_iterations = 0;
   uint64_t merge_time_us = 0;
 
@@ -225,7 +234,7 @@ int main(int argc, char *argv[]) {
     using clock = std::chrono::high_resolution_clock;
     auto next = clock::now();
     while (keep_flipping.load(std::memory_order_relaxed)) {
-      next += std::chrono::milliseconds(kFlipIntervalMs);
+      next += std::chrono::milliseconds(flip_interval_ms);
       std::this_thread::sleep_until(next);
 
       auto m0 = clock::now();

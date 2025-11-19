@@ -41,4 +41,5 @@ set(CMAKE_MAKEFILE_PRODUCTS
 set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/tsdb_benchmark.dir/DependInfo.cmake"
   "CMakeFiles/tsdb_insert_bench.dir/DependInfo.cmake"
+  "CMakeFiles/tsdb_read_bench.dir/DependInfo.cmake"
   )

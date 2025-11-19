@@ -20,4 +20,11 @@ add_executable(tsdb_insert_bench
 
 target_link_libraries(tsdb_insert_bench PRIVATE pthread)
 
+add_executable(tsdb_read_bench
+  tsdb_read_bench.cpp
+)
+
+target_link_libraries(tsdb_read_bench PRIVATE pthread)
+
+
 
