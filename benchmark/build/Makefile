@@ -129,6 +129,19 @@ tsdb_benchmark/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_benchmark.dir/build.make CMakeFiles/tsdb_benchmark.dir/build
 .PHONY : tsdb_benchmark/fast
 
+#=============================================================================
+# Target rules for targets named tsdb_insert_bench
+
+# Build rule for target.
+tsdb_insert_bench: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tsdb_insert_bench
+.PHONY : tsdb_insert_bench
+
+# fast build rule for target.
+tsdb_insert_bench/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_insert_bench.dir/build.make CMakeFiles/tsdb_insert_bench.dir/build
+.PHONY : tsdb_insert_bench/fast
+
 tsdb_benchmark.o: tsdb_benchmark.cpp.o
 .PHONY : tsdb_benchmark.o
 
@@ -153,6 +166,30 @@ tsdb_benchmark.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_benchmark.dir/build.make CMakeFiles/tsdb_benchmark.dir/tsdb_benchmark.cpp.s
 .PHONY : tsdb_benchmark.cpp.s
 
+tsdb_insert_bench.o: tsdb_insert_bench.cpp.o
+.PHONY : tsdb_insert_bench.o
+
+# target to build an object file
+tsdb_insert_bench.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_insert_bench.dir/build.make CMakeFiles/tsdb_insert_bench.dir/tsdb_insert_bench.cpp.o
+.PHONY : tsdb_insert_bench.cpp.o
+
+tsdb_insert_bench.i: tsdb_insert_bench.cpp.i
+.PHONY : tsdb_insert_bench.i
+
+# target to preprocess a source file
+tsdb_insert_bench.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_insert_bench.dir/build.make CMakeFiles/tsdb_insert_bench.dir/tsdb_insert_bench.cpp.i
+.PHONY : tsdb_insert_bench.cpp.i
+
+tsdb_insert_bench.s: tsdb_insert_bench.cpp.s
+.PHONY : tsdb_insert_bench.s
+
+# target to generate assembly for a file
+tsdb_insert_bench.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_insert_bench.dir/build.make CMakeFiles/tsdb_insert_bench.dir/tsdb_insert_bench.cpp.s
+.PHONY : tsdb_insert_bench.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -162,9 +199,13 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... tsdb_benchmark"
+	@echo "... tsdb_insert_bench"
 	@echo "... tsdb_benchmark.o"
 	@echo "... tsdb_benchmark.i"
 	@echo "... tsdb_benchmark.s"
+	@echo "... tsdb_insert_bench.o"
+	@echo "... tsdb_insert_bench.i"
+	@echo "... tsdb_insert_bench.s"
 .PHONY : help
 
 

@@ -1,1 +1,1 @@
-/usr/bin/c++ CMakeFiles/tsdb_benchmark.dir/tsdb_benchmark.cpp.o -o tsdb_benchmark  -lpthread 
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/tsdb_benchmark.dir/tsdb_benchmark.cpp.o -o tsdb_benchmark  -lpthread 

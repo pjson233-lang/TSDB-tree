@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/tsdb_insert_bench.dir/tsdb_insert_bench.cpp.o -o tsdb_insert_bench  -lpthread 

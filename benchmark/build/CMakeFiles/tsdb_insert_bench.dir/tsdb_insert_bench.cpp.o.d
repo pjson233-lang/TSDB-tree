@@ -1,5 +1,5 @@
-CMakeFiles/tsdb_benchmark.dir/tsdb_benchmark.cpp.o: \
- /home/www/sbtree1/benchmark/tsdb_benchmark.cpp \
+CMakeFiles/tsdb_insert_bench.dir/tsdb_insert_bench.cpp.o: \
+ /home/www/sbtree1/benchmark/tsdb_insert_bench.cpp \
  /usr/include/stdc-predef.h /home/www/sbtree1/benchmark/tsdb_core.h \
  /usr/include/c++/11/algorithm /usr/include/c++/11/utility \
  /usr/include/x86_64-linux-gnu/c++/11/bits/c++config.h \

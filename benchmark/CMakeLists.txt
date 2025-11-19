@@ -14,4 +14,10 @@ add_executable(tsdb_benchmark
 
 target_link_libraries(tsdb_benchmark PRIVATE pthread)
 
+add_executable(tsdb_insert_bench
+  tsdb_insert_bench.cpp
+)
+
+target_link_libraries(tsdb_insert_bench PRIVATE pthread)
+
 
