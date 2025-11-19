@@ -75,7 +75,15 @@ struct Slot {
   // merge thread, and flush logic, so it must be atomic.
   std::atomic<uint8_t> state;
 
-  Slot() : recs(nullptr), hwm(0), state(SLOT_STATE_WRITING) {}
+  // Slot-level key range metadata (for RDS-side pruning in range_query).
+  // Writer thread maintains these while state == WRITING; readers only access
+  // them after observing state == SEALED.
+  std::atomic<uint64_t> min_key;
+  std::atomic<uint64_t> max_key;
+
+  Slot()
+      : recs(nullptr), hwm(0), state(SLOT_STATE_WRITING),
+        min_key(std::numeric_limits<uint64_t>::max()), max_key(0) {}
 
   // ============ Semantic Helpers (encapsulate atomic + memory_order)
   // ============
@@ -94,6 +102,9 @@ struct Slot {
   inline void reset_for_write() {
     hwm.store(0, std::memory_order_release);
     state.store(SLOT_STATE_WRITING, std::memory_order_release);
+    min_key.store(std::numeric_limits<uint64_t>::max(),
+                  std::memory_order_relaxed);
+    max_key.store(0, std::memory_order_relaxed);
   }
 
   // 写线程准备切走这个 slot 时调用：直接 seal 为 SEALED 状态
@@ -425,17 +436,16 @@ private:
 
     // 1) 从 Tree 的所有 leaf 聚合数据
     std::vector<Record> tree_data;
+    // 注意：SBTree 的叶子按照 key 高位做区间分片，且每个 leaf 的 data()
+    // 内部有序，且不同 leaf 的 key 区间不重叠。因此按 leaf_idx 从小到大
+    // 依次 append 即可保证全局有序，无需再 sort。
     for (size_t li = 0; li < tree_->leaf_count(); ++li) {
       const SBTreeLeaf *leaf = tree_->leaf_at(li);
-      if (leaf) {
-        const auto &leaf_data = leaf->data();
-        tree_data.insert(tree_data.end(), leaf_data.begin(), leaf_data.end());
+      if (!leaf) {
+        continue;
       }
-    }
-    // Tree 数据已经是各 leaf 内部有序的，现在需要全局排序
-    if (!tree_data.empty()) {
-      std::sort(tree_data.begin(), tree_data.end(),
-                [](const Record &a, const Record &b) { return a.key < b.key; });
+      const auto &leaf_data = leaf->data();
+      tree_data.insert(tree_data.end(), leaf_data.begin(), leaf_data.end());
     }
 
     // 2) 从 RDS（sealed buffer 中的 sealed slot）聚合数据
@@ -511,10 +521,6 @@ inline std::vector<Record> Reader::range_query(uint64_t key_lo,
     if (!leaf)
       continue;
 
-    const auto &data = leaf->data();
-    if (data.empty())
-      continue;
-
     // Quick prune: no overlap with [key_lo, key_hi]
     // Skip if leaf is completely below key_lo or completely above key_hi
     // (Note: empty leaves have min_key=UINT64_MAX, max_key=0, which doesn't
@@ -523,11 +529,20 @@ inline std::vector<Record> Reader::range_query(uint64_t key_lo,
       continue;
     }
 
-    // Linear scan within leaf to find [key_lo, key_hi] (simpler and correct)
-    for (const auto &r : data) {
-      if (r.key >= key_lo && r.key <= key_hi) {
-        tree_part.push_back(r);
-      }
+    const auto &data = leaf->data();
+    if (data.empty())
+      continue;
+
+    // 使用二分查找在 leaf 内定位 [key_lo, key_hi] 的子区间，然后一次性拷贝
+    auto it_lo =
+        std::lower_bound(data.begin(), data.end(), key_lo,
+                         [](const Record &r, uint64_t k) { return r.key < k; });
+    auto it_hi =
+        std::upper_bound(data.begin(), data.end(), key_hi,
+                         [](uint64_t k, const Record &r) { return k < r.key; });
+
+    for (auto it = it_lo; it != it_hi; ++it) {
+      tree_part.push_back(*it);
     }
   }
 
@@ -548,6 +563,16 @@ inline std::vector<Record> Reader::range_query(uint64_t key_lo,
         uint16_t n = s.hwm.load(std::memory_order_acquire);
         if (n == 0)
           continue;
+
+        // Slot-level key range 剪枝：如果整个 slot 区间与 [key_lo, key_hi]
+        // 无交集，则可以直接跳过。
+        uint64_t slot_min =
+            s.min_key.load(std::memory_order_acquire); // 已在 WRITING 阶段维护
+        uint64_t slot_max =
+            s.max_key.load(std::memory_order_acquire); // 已在 WRITING 阶段维护
+        if (slot_max < key_lo || slot_min > key_hi) {
+          continue;
+        }
 
         const Record *base = s.recs;
         for (uint16_t i = 0; i < n; ++i) {
@@ -847,6 +872,17 @@ inline void Engine::insert(uint64_t key, uint64_t value) {
   uint16_t pos = s->append_pos();
   // 写入数据（对 merge/flush 可见，因为前面的 append_pos 建立全序）
   s->recs[pos] = Record{key, value, 0};
+
+  // 更新 slot 级别的 key 范围元数据（用于 RDS 侧剪枝）。
+  // 单写者（SWMR）模式下，这里只需使用 relaxed 原子操作即可。
+  uint64_t cur_min = s->min_key.load(std::memory_order_relaxed);
+  if (key < cur_min) {
+    s->min_key.store(key, std::memory_order_relaxed);
+  }
+  uint64_t cur_max = s->max_key.load(std::memory_order_relaxed);
+  if (key > cur_max) {
+    s->max_key.store(key, std::memory_order_relaxed);
+  }
 }
 
 // =========================

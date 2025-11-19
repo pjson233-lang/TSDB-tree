@@ -1,7 +1,7 @@
-merge_basic_test 2 0.00103905
-concurrent_insert_flip_test 2 0.0289343
-read_fresh_test 2 0.00135691
-flipper_test 2 0.0537046
-range_query_test 2 0.00488449
-perf_test 2 0.143654
+merge_basic_test 3 0.00153279
+concurrent_insert_flip_test 3 0.0251557
+read_fresh_test 3 0.00157544
+flipper_test 3 0.0325288
+range_query_test 3 0.0035538
+perf_test 3 0.108917
 ---
