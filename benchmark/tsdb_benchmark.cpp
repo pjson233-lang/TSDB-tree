@@ -1,3 +1,5 @@
+// 保留默认的严格一致性（TSDB_STRICT_CONSISTENCY=1）
+// 栅栏在宏中定义，性能/稳定性权衡最优
 #include "tsdb_core.h"
 
 #include <algorithm>

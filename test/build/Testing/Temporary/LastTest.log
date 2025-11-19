@@ -1,0 +1,128 @@
+Start testing: Nov 18 11:49 CST
+----------------------------------------------------------
+1/6 Testing: merge_basic_test
+1/6 Test: merge_basic_test
+Command: "/home/www/sbtree1/test/build/merge_basic_test"
+Directory: /home/www/sbtree1/test/build
+"merge_basic_test" start time: Nov 18 11:49 CST
+Output:
+----------------------------------------------------------
+merge_basic_test passed.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"merge_basic_test" end time: Nov 18 11:49 CST
+"merge_basic_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/6 Testing: concurrent_insert_flip_test
+2/6 Test: concurrent_insert_flip_test
+Command: "/home/www/sbtree1/test/build/concurrent_insert_flip_test"
+Directory: /home/www/sbtree1/test/build
+"concurrent_insert_flip_test" start time: Nov 18 11:49 CST
+Output:
+----------------------------------------------------------
+concurrent_insert_flip_test passed. total=40000
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"concurrent_insert_flip_test" end time: Nov 18 11:49 CST
+"concurrent_insert_flip_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/6 Testing: read_fresh_test
+3/6 Test: read_fresh_test
+Command: "/home/www/sbtree1/test/build/read_fresh_test"
+Directory: /home/www/sbtree1/test/build
+"read_fresh_test" start time: Nov 18 11:49 CST
+Output:
+----------------------------------------------------------
+read_fresh_test passed. total=200
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"read_fresh_test" end time: Nov 18 11:49 CST
+"read_fresh_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/6 Testing: flipper_test
+4/6 Test: flipper_test
+Command: "/home/www/sbtree1/test/build/flipper_test"
+Directory: /home/www/sbtree1/test/build
+"flipper_test" start time: Nov 18 11:49 CST
+Output:
+----------------------------------------------------------
+Flipper test:
+  Expected records: 200000
+  Tree records:     200000
+  Reader scan_all:  200000
+Flipper test PASSED: auto flip + merge working correctly
+<end of output>
+Test time =   0.11 sec
+----------------------------------------------------------
+Test Passed.
+"flipper_test" end time: Nov 18 11:49 CST
+"flipper_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/6 Testing: range_query_test
+5/6 Test: range_query_test
+Command: "/home/www/sbtree1/test/build/range_query_test"
+Directory: /home/www/sbtree1/test/build
+"range_query_test" start time: Nov 18 11:49 CST
+Output:
+----------------------------------------------------------
+=== Range Query Tests ===
+
+Test 1: Range query on Tree only (after flush+merge)
+  Inserted: 0..999 (1000 records)
+  Query [100, 199]: 100 records
+  ✓ Test 1 passed!
+
+Test 2: Range query on empty tree
+  Empty tree query [100, 900]: 0 records
+  ✓ Test 2 passed!
+
+=== All range query tests passed! ===
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"range_query_test" end time: Nov 18 11:49 CST
+"range_query_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+6/6 Testing: perf_test
+6/6 Test: perf_test
+Command: "/home/www/sbtree1/test/build/perf_test" "1000000" "16"
+Directory: /home/www/sbtree1/test/build
+"perf_test" start time: Nov 18 11:49 CST
+Output:
+----------------------------------------------------------
+=== Performance Test Result ===
+Config:
+  records       : 1000000
+  threads       : 16
+  slots/buffer  : 2048
+
+Results:
+  insert phase  : 43 ms
+  flush+merge   : 231 ms
+  total         : 274 ms
+  tree records  : 1000000
+  insert Mops/s : 23.2558
+  merge % time  : 84.3066%
+==============================
+[Check] ✓ All records in tree.
+<end of output>
+Test time =   0.29 sec
+----------------------------------------------------------
+Test Passed.
+"perf_test" end time: Nov 18 11:49 CST
+"perf_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Nov 18 11:49 CST
