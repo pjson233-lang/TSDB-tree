@@ -88,9 +88,15 @@ struct Slot {
   // ============ Semantic Helpers (encapsulate atomic + memory_order)
   // ============
 
-  // 写线程在 fast path 调用：获取 append 位置，使用 acq_rel 确保可见性
+  // 写线程在 fast path 调用：获取 append 位置。
+  // 严格一致性模式下使用 acq_rel，性能模式下使用 relaxed，
+  // 真正跨线程的可见性由 seal 前后的 fence + state.store(release) 来保证。
   inline uint16_t append_pos() {
+#if TSDB_STRICT_CONSISTENCY
     return hwm.fetch_add(1, std::memory_order_acq_rel);
+#else
+    return hwm.fetch_add(1, std::memory_order_relaxed);
+#endif
   }
 
   // merge / flush / reader 侧读取当前大小，使用 acquire 同步
@@ -803,10 +809,7 @@ inline void MergeWorker::run_once() {
   }
 
   // 2) 对每个 leaf 的 batch sort 一次，然后 merge_runs 一次
-  // === 优化：并行处理每个 leaf 的 merge ===
-  std::vector<std::thread> merge_workers;
-
-  // 先收集所有需要处理的 leaf index
+  // 小批量时走单线程，大批量时才并行，避免频繁创建/销毁线程的开销。
   std::vector<size_t> leaf_indices_to_merge;
   for (size_t leaf_idx = 0; leaf_idx < kLeafCount; ++leaf_idx) {
     if (!leaf_batches[leaf_idx].empty()) {
@@ -814,23 +817,33 @@ inline void MergeWorker::run_once() {
     }
   }
 
-  // 为每个需要处理的 leaf 启动一个线程
-  for (size_t leaf_idx : leaf_indices_to_merge) {
-    merge_workers.emplace_back([this, leaf_idx, &leaf_batches]() {
-      // 1) 对该 leaf 的 batch 排序
+  // 阈值：总 batch 数较少或待处理 leaf 数量很小时，直接在当前线程顺序处理。
+  constexpr uint64_t kParallelThreshold = 50'000;
+  if (leaf_indices_to_merge.size() <= 1 ||
+      total_in_batches < kParallelThreshold) {
+    for (size_t leaf_idx : leaf_indices_to_merge) {
       auto &batch = leaf_batches[leaf_idx];
       std::sort(batch.begin(), batch.end(),
                 [](const Record &a, const Record &b) { return a.key < b.key; });
-
-      // 2) 将排序后的 batch merge 到对应的 leaf
       SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
       tree_->merge_run_into_leaf(leaf, batch);
-    });
-  }
-
-  // 等待所有 leaf merge 线程完成
-  for (auto &worker : merge_workers) {
-    worker.join();
+    }
+  } else {
+    // 大批量场景：并行处理每个 leaf 的 merge。
+    std::vector<std::thread> merge_workers;
+    for (size_t leaf_idx : leaf_indices_to_merge) {
+      merge_workers.emplace_back([this, leaf_idx, &leaf_batches]() {
+        auto &batch = leaf_batches[leaf_idx];
+        std::sort(
+            batch.begin(), batch.end(),
+            [](const Record &a, const Record &b) { return a.key < b.key; });
+        SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
+        tree_->merge_run_into_leaf(leaf, batch);
+      });
+    }
+    for (auto &worker : merge_workers) {
+      worker.join();
+    }
   }
 }
 
