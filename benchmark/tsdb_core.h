@@ -654,34 +654,35 @@ inline void SBTreeLeaf::merge_runs(const std::vector<Record> &newrun) {
     return;
   }
 
-  size_t before_size = data_.size();
-  size_t expected_after = before_size + newrun.size();
+  if (data_.empty()) {
+    data_ = newrun;
+  } else if (data_.back().key <= newrun.front().key) {
+    // Fast path: new run is strictly after existing data, just append.
+    data_.insert(data_.end(), newrun.begin(), newrun.end());
+  } else {
+    // General path: merge two sorted sequences.
+    std::vector<Record> merged;
+    merged.reserve(data_.size() + newrun.size());
 
-  // Assume newrun is sorted by key (it should come from sorted slots).
-  // Merge existing sorted data_ with newrun into a new vector.
-  std::vector<Record> merged;
-  merged.reserve(data_.size() + newrun.size());
+    size_t i = 0;
+    size_t j = 0;
 
-  size_t i = 0;
-  size_t j = 0;
-
-  while (i < data_.size() && j < newrun.size()) {
-    if (data_[i].key <= newrun[j].key) {
+    while (i < data_.size() && j < newrun.size()) {
+      if (data_[i].key <= newrun[j].key) {
+        merged.push_back(data_[i++]);
+      } else {
+        merged.push_back(newrun[j++]);
+      }
+    }
+    while (i < data_.size()) {
       merged.push_back(data_[i++]);
-    } else {
+    }
+    while (j < newrun.size()) {
       merged.push_back(newrun[j++]);
     }
-  }
-  while (i < data_.size()) {
-    merged.push_back(data_[i++]);
-  }
-  while (j < newrun.size()) {
-    merged.push_back(newrun[j++]);
-  }
 
-  size_t after_size = merged.size();
-
-  data_.swap(merged);
+    data_.swap(merged);
+  }
 
   // 维护 min_key_ 和 max_key_ 用于 range 查询
   if (!data_.empty()) {
