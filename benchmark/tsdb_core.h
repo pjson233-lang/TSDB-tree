@@ -365,7 +365,8 @@ private:
 
 class SBTree {
 public:
-  static constexpr size_t kLeafCount = 4;
+  static constexpr size_t kLeafCount = 16;
+  static constexpr int kLeafBits = 4; // log2(kLeafCount)
 
   SBTree();
 
@@ -633,8 +634,9 @@ inline SBTreeLeaf *SBTree::locate_leaf(uint64_t key) {
     return nullptr;
   }
   // Use the top log2(kLeafCount) bits to choose a leaf.
-  constexpr int bits = 2; // since kLeafCount == 4
-  size_t idx = static_cast<size_t>(key >> (64 - bits));
+  static_assert((kLeafCount & (kLeafCount - 1)) == 0,
+                "kLeafCount must be power of two");
+  size_t idx = static_cast<size_t>(key >> (64 - kLeafBits));
   if (idx >= kLeafCount) {
     idx = kLeafCount - 1;
   }
@@ -822,7 +824,7 @@ inline void MergeWorker::run_once() {
   }
 
   // 阈值：总 batch 数较少或待处理 leaf 数量很小时，直接在当前线程顺序处理。
-  constexpr uint64_t kParallelThreshold = 50'000;
+  constexpr uint64_t kParallelThreshold = 10'000;
   if (leaf_indices_to_merge.size() <= 1 ||
       total_in_batches < kParallelThreshold) {
     for (size_t leaf_idx : leaf_indices_to_merge) {
