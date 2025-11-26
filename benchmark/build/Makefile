@@ -117,45 +117,6 @@ depend:
 .PHONY : depend
 
 #=============================================================================
-# Target rules for targets named tsdb_benchmark
-
-# Build rule for target.
-tsdb_benchmark: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tsdb_benchmark
-.PHONY : tsdb_benchmark
-
-# fast build rule for target.
-tsdb_benchmark/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_benchmark.dir/build.make CMakeFiles/tsdb_benchmark.dir/build
-.PHONY : tsdb_benchmark/fast
-
-#=============================================================================
-# Target rules for targets named tsdb_insert_bench
-
-# Build rule for target.
-tsdb_insert_bench: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tsdb_insert_bench
-.PHONY : tsdb_insert_bench
-
-# fast build rule for target.
-tsdb_insert_bench/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_insert_bench.dir/build.make CMakeFiles/tsdb_insert_bench.dir/build
-.PHONY : tsdb_insert_bench/fast
-
-#=============================================================================
-# Target rules for targets named tsdb_read_bench
-
-# Build rule for target.
-tsdb_read_bench: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tsdb_read_bench
-.PHONY : tsdb_read_bench
-
-# fast build rule for target.
-tsdb_read_bench/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_read_bench.dir/build.make CMakeFiles/tsdb_read_bench.dir/build
-.PHONY : tsdb_read_bench/fast
-
-#=============================================================================
 # Target rules for targets named tsdb_unified_bench
 
 # Build rule for target.
@@ -168,77 +129,42 @@ tsdb_unified_bench/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_unified_bench.dir/build.make CMakeFiles/tsdb_unified_bench.dir/build
 .PHONY : tsdb_unified_bench/fast
 
-tsdb_benchmark.o: tsdb_benchmark.cpp.o
-.PHONY : tsdb_benchmark.o
+#=============================================================================
+# Target rules for targets named tsdb_tests
+
+# Build rule for target.
+tsdb_tests: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tsdb_tests
+.PHONY : tsdb_tests
+
+# fast build rule for target.
+tsdb_tests/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_tests.dir/build.make CMakeFiles/tsdb_tests.dir/build
+.PHONY : tsdb_tests/fast
+
+tsdb_tests.o: tsdb_tests.cpp.o
+.PHONY : tsdb_tests.o
 
 # target to build an object file
-tsdb_benchmark.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_benchmark.dir/build.make CMakeFiles/tsdb_benchmark.dir/tsdb_benchmark.cpp.o
-.PHONY : tsdb_benchmark.cpp.o
+tsdb_tests.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_tests.dir/build.make CMakeFiles/tsdb_tests.dir/tsdb_tests.cpp.o
+.PHONY : tsdb_tests.cpp.o
 
-tsdb_benchmark.i: tsdb_benchmark.cpp.i
-.PHONY : tsdb_benchmark.i
-
-# target to preprocess a source file
-tsdb_benchmark.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_benchmark.dir/build.make CMakeFiles/tsdb_benchmark.dir/tsdb_benchmark.cpp.i
-.PHONY : tsdb_benchmark.cpp.i
-
-tsdb_benchmark.s: tsdb_benchmark.cpp.s
-.PHONY : tsdb_benchmark.s
-
-# target to generate assembly for a file
-tsdb_benchmark.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_benchmark.dir/build.make CMakeFiles/tsdb_benchmark.dir/tsdb_benchmark.cpp.s
-.PHONY : tsdb_benchmark.cpp.s
-
-tsdb_insert_bench.o: tsdb_insert_bench.cpp.o
-.PHONY : tsdb_insert_bench.o
-
-# target to build an object file
-tsdb_insert_bench.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_insert_bench.dir/build.make CMakeFiles/tsdb_insert_bench.dir/tsdb_insert_bench.cpp.o
-.PHONY : tsdb_insert_bench.cpp.o
-
-tsdb_insert_bench.i: tsdb_insert_bench.cpp.i
-.PHONY : tsdb_insert_bench.i
+tsdb_tests.i: tsdb_tests.cpp.i
+.PHONY : tsdb_tests.i
 
 # target to preprocess a source file
-tsdb_insert_bench.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_insert_bench.dir/build.make CMakeFiles/tsdb_insert_bench.dir/tsdb_insert_bench.cpp.i
-.PHONY : tsdb_insert_bench.cpp.i
+tsdb_tests.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_tests.dir/build.make CMakeFiles/tsdb_tests.dir/tsdb_tests.cpp.i
+.PHONY : tsdb_tests.cpp.i
 
-tsdb_insert_bench.s: tsdb_insert_bench.cpp.s
-.PHONY : tsdb_insert_bench.s
-
-# target to generate assembly for a file
-tsdb_insert_bench.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_insert_bench.dir/build.make CMakeFiles/tsdb_insert_bench.dir/tsdb_insert_bench.cpp.s
-.PHONY : tsdb_insert_bench.cpp.s
-
-tsdb_read_bench.o: tsdb_read_bench.cpp.o
-.PHONY : tsdb_read_bench.o
-
-# target to build an object file
-tsdb_read_bench.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_read_bench.dir/build.make CMakeFiles/tsdb_read_bench.dir/tsdb_read_bench.cpp.o
-.PHONY : tsdb_read_bench.cpp.o
-
-tsdb_read_bench.i: tsdb_read_bench.cpp.i
-.PHONY : tsdb_read_bench.i
-
-# target to preprocess a source file
-tsdb_read_bench.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_read_bench.dir/build.make CMakeFiles/tsdb_read_bench.dir/tsdb_read_bench.cpp.i
-.PHONY : tsdb_read_bench.cpp.i
-
-tsdb_read_bench.s: tsdb_read_bench.cpp.s
-.PHONY : tsdb_read_bench.s
+tsdb_tests.s: tsdb_tests.cpp.s
+.PHONY : tsdb_tests.s
 
 # target to generate assembly for a file
-tsdb_read_bench.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_read_bench.dir/build.make CMakeFiles/tsdb_read_bench.dir/tsdb_read_bench.cpp.s
-.PHONY : tsdb_read_bench.cpp.s
+tsdb_tests.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_tests.dir/build.make CMakeFiles/tsdb_tests.dir/tsdb_tests.cpp.s
+.PHONY : tsdb_tests.cpp.s
 
 tsdb_unified_bench.o: tsdb_unified_bench.cpp.o
 .PHONY : tsdb_unified_bench.o
@@ -272,19 +198,11 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
-	@echo "... tsdb_benchmark"
-	@echo "... tsdb_insert_bench"
-	@echo "... tsdb_read_bench"
+	@echo "... tsdb_tests"
 	@echo "... tsdb_unified_bench"
-	@echo "... tsdb_benchmark.o"
-	@echo "... tsdb_benchmark.i"
-	@echo "... tsdb_benchmark.s"
-	@echo "... tsdb_insert_bench.o"
-	@echo "... tsdb_insert_bench.i"
-	@echo "... tsdb_insert_bench.s"
-	@echo "... tsdb_read_bench.o"
-	@echo "... tsdb_read_bench.i"
-	@echo "... tsdb_read_bench.s"
+	@echo "... tsdb_tests.o"
+	@echo "... tsdb_tests.i"
+	@echo "... tsdb_tests.s"
 	@echo "... tsdb_unified_bench.o"
 	@echo "... tsdb_unified_bench.i"
 	@echo "... tsdb_unified_bench.s"

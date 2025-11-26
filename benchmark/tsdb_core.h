@@ -411,6 +411,9 @@ public:
   // API used by user threads
   void insert(uint64_t key, uint64_t value);
 
+  // Flush thread-local slot so that tail WRITING data becomes visible.
+  void flush_thread_local();
+
 private:
   BufferManager *bm;
   SBTree *tree;
@@ -896,6 +899,20 @@ inline void Engine::insert(uint64_t key, uint64_t value) {
   if (key > cur_max) {
     s->max_key.store(key, std::memory_order_relaxed);
   }
+}
+
+inline void Engine::flush_thread_local() {
+  Slot *s = tls_ctx.current_slot;
+  if (!s) {
+    return;
+  }
+  if (!s->has_data_acquire()) {
+    tls_ctx.current_slot = nullptr;
+    return;
+  }
+  TSDB_FENCE_BEFORE_SEAL();
+  s->seal();
+  tls_ctx.current_slot = nullptr;
 }
 
 // =========================

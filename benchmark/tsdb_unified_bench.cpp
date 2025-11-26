@@ -181,6 +181,27 @@ size_t GetMemoryUsage(const BufferManager &bm, const SBTree &tree) {
   return buffer_mem + tree_mem;
 }
 
+struct SlotStats {
+  uint64_t used_slots = 0;
+  uint64_t filled_records = 0;
+};
+
+SlotStats ComputeSlotStats(const BufferManager &bm) {
+  SlotStats stats;
+  for (int bi = 0; bi < 2; ++bi) {
+    const Buffer &buf = bm.buffers[bi];
+    for (uint32_t i = 0; i < buf.slot_capacity; ++i) {
+      const Slot &s = buf.slots[i];
+      uint16_t h = s.hwm.load(std::memory_order_acquire);
+      if (h > 0) {
+        ++stats.used_slots;
+        stats.filled_records += h;
+      }
+    }
+  }
+  return stats;
+}
+
 // =========================
 // 线程函数
 // =========================
@@ -205,6 +226,7 @@ void InsertThreadFunc(Engine *eng, double &elapsed_us,
     }
   }
 
+  eng->flush_thread_local();
   elapsed_us = timer.EndUs();
   inserted_count = local_count;
 }
@@ -355,6 +377,7 @@ void MixedThreadFunc(Engine *eng, Reader *reader, double &elapsed_us,
     }
   }
 
+  eng->flush_thread_local();
   elapsed_us = timer.EndUs();
 }
 
@@ -437,9 +460,6 @@ void RunInsertOnly(uint32_t num_threads, int flip_interval_ms) {
     flipper.join();
   }
 
-  // 最终 flush
-  flush_all_and_merge_once(&bm, &tree);
-
   double total_time_us = total_timer.EndUs();
   double total_time_s = total_time_us / 1e6;
 
@@ -465,6 +485,24 @@ void RunInsertOnly(uint32_t num_threads, int flip_interval_ms) {
   uint64_t buffered_records = CountBufferedRecords(bm);
   uint64_t tree_records = CountTreeRecords(tree);
   uint64_t alloc_failures = bm.alloc_failures.load(std::memory_order_relaxed);
+  SlotStats slot_stats = ComputeSlotStats(bm);
+  const double slot_capacity = static_cast<double>(SLOT_CAPACITY);
+  const double buffer_capacity =
+      static_cast<double>(2ull * slots_per_buffer * SLOT_CAPACITY);
+  double buffer_waste_ratio =
+      buffer_capacity > 0.0
+          ? 1.0 - static_cast<double>(tree_records + buffered_records) /
+                      buffer_capacity
+          : 0.0;
+  double slot_fill_ratio =
+      slot_stats.used_slots > 0
+          ? static_cast<double>(slot_stats.filled_records) /
+                (static_cast<double>(slot_stats.used_slots) * slot_capacity)
+          : 0.0;
+  double merge_ratio =
+      (total_time_us > 0.0) ? (merge_time_us / total_time_us) : 0.0;
+
+  uint64_t tree_records_post = 0;
 
   std::cout << "Insert Finished!\n";
   std::cout << "  Total inserted records : " << total_inserted << "\n";
@@ -477,10 +515,18 @@ void RunInsertOnly(uint32_t num_threads, int flip_interval_ms) {
   std::cout << "  Buffered records       : " << buffered_records << "\n";
   std::cout << "  Tree records           : " << tree_records << "\n";
   std::cout << "  Alloc failures         : " << alloc_failures << "\n";
+  std::cout << "  Buffer Waste Ratio     : " << buffer_waste_ratio * 100.0
+            << " %\n";
+  std::cout << "  Slot Fill Ratio        : " << slot_fill_ratio * 100.0 << " %\n";
 
   double merge_ms = merge_time_us / 1000.0;
   std::cout << "  Merge iterations       : " << merge_iterations << "\n";
   std::cout << "  Merge total time       : " << merge_ms << " ms\n";
+  std::cout << "  Merge CPU Ratio        : " << merge_ratio * 100.0 << " %\n";
+
+  flush_all_and_merge_once(&bm, &tree);
+  tree_records_post = CountTreeRecords(tree);
+  std::cout << "  Tree records (post-flush) : " << tree_records_post << "\n";
 }
 
 // Lookup-only workload
@@ -674,14 +720,23 @@ void RunMixed(uint32_t num_threads, int flip_interval_ms) {
 
   // 启动后台 Flipper
   std::atomic<bool> keep_flipping{true};
+  std::atomic<uint64_t> merge_iterations{0};
+  std::atomic<uint64_t> merge_time_us{0};
   std::thread flipper([&]() {
     using clock = std::chrono::high_resolution_clock;
     auto next = clock::now();
     while (keep_flipping.load(std::memory_order_relaxed)) {
       next += std::chrono::milliseconds(flip_interval_ms);
       std::this_thread::sleep_until(next);
+      auto m0 = clock::now();
       bm.flip_buffers();
       worker.run_once();
+      auto m1 = clock::now();
+      merge_time_us.fetch_add(
+          std::chrono::duration_cast<std::chrono::microseconds>(m1 - m0)
+              .count(),
+          std::memory_order_relaxed);
+      merge_iterations.fetch_add(1, std::memory_order_relaxed);
     }
   });
 
@@ -712,7 +767,6 @@ void RunMixed(uint32_t num_threads, int flip_interval_ms) {
   if (flipper.joinable()) {
     flipper.join();
   }
-  flush_all_and_merge_once(&bm, &tree);
 
   double total_time_us = total_timer.EndUs();
   double total_time_s = total_time_us / 1e6;
@@ -729,6 +783,27 @@ void RunMixed(uint32_t num_threads, int flip_interval_ms) {
   uint64_t total_ops_done = total_insert_ops + total_lookup_ops + total_scan_ops;
   double throughput_mops =
       (total_time_s > 0.0) ? (static_cast<double>(total_ops_done) / total_time_s / 1e6) : 0.0;
+  uint64_t buffered_records = CountBufferedRecords(bm);
+  uint64_t tree_records = CountTreeRecords(tree);
+  SlotStats slot_stats = ComputeSlotStats(bm);
+  const double slot_capacity = static_cast<double>(SLOT_CAPACITY);
+  const double buffer_capacity =
+      static_cast<double>(2ull * slots_per_buffer * SLOT_CAPACITY);
+  double buffer_waste_ratio =
+      buffer_capacity > 0.0
+          ? 1.0 - static_cast<double>(tree_records + buffered_records) /
+                      buffer_capacity
+          : 0.0;
+  double slot_fill_ratio =
+      slot_stats.used_slots > 0
+          ? static_cast<double>(slot_stats.filled_records) /
+                (static_cast<double>(slot_stats.used_slots) * slot_capacity)
+          : 0.0;
+  double merge_ratio =
+      (total_time_us > 0.0)
+          ? (static_cast<double>(merge_time_us.load(std::memory_order_relaxed)) /
+             total_time_us)
+          : 0.0;
 
   std::cout << "Mixed Finished!\n";
   std::cout << "  Total ops              : " << total_ops_done << "\n";
@@ -737,6 +812,16 @@ void RunMixed(uint32_t num_threads, int flip_interval_ms) {
   std::cout << "    Scan ops             : " << total_scan_ops << "\n";
   std::cout << "  Total time             : " << total_time_us / 1000.0 << " ms\n";
   std::cout << "  Throughput             : " << throughput_mops << " Mops/sec\n";
+  std::cout << "  Buffered records       : " << buffered_records << "\n";
+  std::cout << "  Tree records           : " << tree_records << "\n";
+  std::cout << "  Buffer Waste Ratio     : " << buffer_waste_ratio * 100.0
+            << " %\n";
+  std::cout << "  Slot Fill Ratio        : " << slot_fill_ratio * 100.0 << " %\n";
+  std::cout << "  Merge CPU Ratio        : " << merge_ratio * 100.0 << " %\n";
+
+  flush_all_and_merge_once(&bm, &tree);
+  uint64_t tree_records_post = CountTreeRecords(tree);
+  std::cout << "  Tree records (post-flush) : " << tree_records_post << "\n";
 }
 
 // =========================

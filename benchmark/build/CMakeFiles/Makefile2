@@ -63,10 +63,8 @@ CMAKE_BINARY_DIR = /home/www/sbtree1/benchmark/build
 # Directory level rules for the build root directory
 
 # The main recursive "all" target.
-all: CMakeFiles/tsdb_benchmark.dir/all
-all: CMakeFiles/tsdb_insert_bench.dir/all
-all: CMakeFiles/tsdb_read_bench.dir/all
 all: CMakeFiles/tsdb_unified_bench.dir/all
+all: CMakeFiles/tsdb_tests.dir/all
 .PHONY : all
 
 # The main recursive "preinstall" target.
@@ -74,89 +72,9 @@ preinstall:
 .PHONY : preinstall
 
 # The main recursive "clean" target.
-clean: CMakeFiles/tsdb_benchmark.dir/clean
-clean: CMakeFiles/tsdb_insert_bench.dir/clean
-clean: CMakeFiles/tsdb_read_bench.dir/clean
 clean: CMakeFiles/tsdb_unified_bench.dir/clean
+clean: CMakeFiles/tsdb_tests.dir/clean
 .PHONY : clean
-
-#=============================================================================
-# Target rules for target CMakeFiles/tsdb_benchmark.dir
-
-# All Build rule for target.
-CMakeFiles/tsdb_benchmark.dir/all:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_benchmark.dir/build.make CMakeFiles/tsdb_benchmark.dir/depend
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_benchmark.dir/build.make CMakeFiles/tsdb_benchmark.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/www/sbtree1/benchmark/build/CMakeFiles --progress-num=1,2 "Built target tsdb_benchmark"
-.PHONY : CMakeFiles/tsdb_benchmark.dir/all
-
-# Build rule for subdir invocation for target.
-CMakeFiles/tsdb_benchmark.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/benchmark/build/CMakeFiles 2
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/tsdb_benchmark.dir/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/benchmark/build/CMakeFiles 0
-.PHONY : CMakeFiles/tsdb_benchmark.dir/rule
-
-# Convenience name for target.
-tsdb_benchmark: CMakeFiles/tsdb_benchmark.dir/rule
-.PHONY : tsdb_benchmark
-
-# clean rule for target.
-CMakeFiles/tsdb_benchmark.dir/clean:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_benchmark.dir/build.make CMakeFiles/tsdb_benchmark.dir/clean
-.PHONY : CMakeFiles/tsdb_benchmark.dir/clean
-
-#=============================================================================
-# Target rules for target CMakeFiles/tsdb_insert_bench.dir
-
-# All Build rule for target.
-CMakeFiles/tsdb_insert_bench.dir/all:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_insert_bench.dir/build.make CMakeFiles/tsdb_insert_bench.dir/depend
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_insert_bench.dir/build.make CMakeFiles/tsdb_insert_bench.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/www/sbtree1/benchmark/build/CMakeFiles --progress-num=3,4 "Built target tsdb_insert_bench"
-.PHONY : CMakeFiles/tsdb_insert_bench.dir/all
-
-# Build rule for subdir invocation for target.
-CMakeFiles/tsdb_insert_bench.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/benchmark/build/CMakeFiles 2
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/tsdb_insert_bench.dir/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/benchmark/build/CMakeFiles 0
-.PHONY : CMakeFiles/tsdb_insert_bench.dir/rule
-
-# Convenience name for target.
-tsdb_insert_bench: CMakeFiles/tsdb_insert_bench.dir/rule
-.PHONY : tsdb_insert_bench
-
-# clean rule for target.
-CMakeFiles/tsdb_insert_bench.dir/clean:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_insert_bench.dir/build.make CMakeFiles/tsdb_insert_bench.dir/clean
-.PHONY : CMakeFiles/tsdb_insert_bench.dir/clean
-
-#=============================================================================
-# Target rules for target CMakeFiles/tsdb_read_bench.dir
-
-# All Build rule for target.
-CMakeFiles/tsdb_read_bench.dir/all:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_read_bench.dir/build.make CMakeFiles/tsdb_read_bench.dir/depend
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_read_bench.dir/build.make CMakeFiles/tsdb_read_bench.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/www/sbtree1/benchmark/build/CMakeFiles --progress-num=5,6 "Built target tsdb_read_bench"
-.PHONY : CMakeFiles/tsdb_read_bench.dir/all
-
-# Build rule for subdir invocation for target.
-CMakeFiles/tsdb_read_bench.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/benchmark/build/CMakeFiles 2
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/tsdb_read_bench.dir/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/benchmark/build/CMakeFiles 0
-.PHONY : CMakeFiles/tsdb_read_bench.dir/rule
-
-# Convenience name for target.
-tsdb_read_bench: CMakeFiles/tsdb_read_bench.dir/rule
-.PHONY : tsdb_read_bench
-
-# clean rule for target.
-CMakeFiles/tsdb_read_bench.dir/clean:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_read_bench.dir/build.make CMakeFiles/tsdb_read_bench.dir/clean
-.PHONY : CMakeFiles/tsdb_read_bench.dir/clean
 
 #=============================================================================
 # Target rules for target CMakeFiles/tsdb_unified_bench.dir
@@ -165,7 +83,7 @@ CMakeFiles/tsdb_read_bench.dir/clean:
 CMakeFiles/tsdb_unified_bench.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_unified_bench.dir/build.make CMakeFiles/tsdb_unified_bench.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_unified_bench.dir/build.make CMakeFiles/tsdb_unified_bench.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/www/sbtree1/benchmark/build/CMakeFiles --progress-num=7,8 "Built target tsdb_unified_bench"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/www/sbtree1/benchmark/build/CMakeFiles --progress-num=3,4 "Built target tsdb_unified_bench"
 .PHONY : CMakeFiles/tsdb_unified_bench.dir/all
 
 # Build rule for subdir invocation for target.
@@ -183,6 +101,32 @@ tsdb_unified_bench: CMakeFiles/tsdb_unified_bench.dir/rule
 CMakeFiles/tsdb_unified_bench.dir/clean:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_unified_bench.dir/build.make CMakeFiles/tsdb_unified_bench.dir/clean
 .PHONY : CMakeFiles/tsdb_unified_bench.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/tsdb_tests.dir
+
+# All Build rule for target.
+CMakeFiles/tsdb_tests.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_tests.dir/build.make CMakeFiles/tsdb_tests.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_tests.dir/build.make CMakeFiles/tsdb_tests.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/www/sbtree1/benchmark/build/CMakeFiles --progress-num=1,2 "Built target tsdb_tests"
+.PHONY : CMakeFiles/tsdb_tests.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/tsdb_tests.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/benchmark/build/CMakeFiles 2
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/tsdb_tests.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/www/sbtree1/benchmark/build/CMakeFiles 0
+.PHONY : CMakeFiles/tsdb_tests.dir/rule
+
+# Convenience name for target.
+tsdb_tests: CMakeFiles/tsdb_tests.dir/rule
+.PHONY : tsdb_tests
+
+# clean rule for target.
+CMakeFiles/tsdb_tests.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tsdb_tests.dir/build.make CMakeFiles/tsdb_tests.dir/clean
+.PHONY : CMakeFiles/tsdb_tests.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.
