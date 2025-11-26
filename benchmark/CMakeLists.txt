@@ -26,5 +26,11 @@ add_executable(tsdb_read_bench
 
 target_link_libraries(tsdb_read_bench PRIVATE pthread)
 
+add_executable(tsdb_unified_bench
+  tsdb_unified_bench.cpp
+)
+
+target_link_libraries(tsdb_unified_bench PRIVATE pthread)
+
 
 

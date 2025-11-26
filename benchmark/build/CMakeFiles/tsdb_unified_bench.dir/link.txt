@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/tsdb_unified_bench.dir/tsdb_unified_bench.cpp.o -o tsdb_unified_bench  -lpthread 
