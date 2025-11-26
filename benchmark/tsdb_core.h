@@ -312,36 +312,6 @@ inline void BufferManager::seal_all_slots_for_flush() {
   }
 }
 
-// =========================
-// Merge Worker (background)
-// =========================
-
-class MergeWorker {
-public:
-  explicit MergeWorker(BufferManager *mgr, class SBTree *tree);
-
-  // Called by background thread
-  void run_once(); // sort + route + merge
-
-  // slot sorting
-  void sort_slot(Slot *s);
-
-  // leaf routing (build runs for tree merge)
-  void route_slot(Slot *s);
-
-private:
-  BufferManager *bm;
-  class SBTree *tree_;
-};
-
-// =========================
-// MergeWorker Inline Implementations
-// =========================
-
-// =========================
-// SB-Tree Interfaces (Final Storage Layer)
-// =========================
-
 class SBTreeLeaf {
 public:
   // min_key_ = UINT64_MAX, max_key_ = 0 indicates empty leaf (no data yet).
@@ -400,6 +370,33 @@ public:
 private:
   SBTreeLeaf leaves_[kLeafCount];
 };
+
+// =========================
+// Merge Worker (background)
+// =========================
+
+class MergeWorker {
+public:
+  explicit MergeWorker(BufferManager *mgr, SBTree *tree);
+
+  // Called by background thread
+  void run_once(); // sort + route + merge
+
+  // slot sorting
+  void sort_slot(Slot *s);
+
+  // leaf routing (build runs for tree merge)
+  void route_slot(Slot *s);
+
+private:
+  BufferManager *bm;
+  SBTree *tree_;
+  std::array<std::vector<Record>, SBTree::kLeafCount> leaf_batches_;
+};
+
+// =========================
+// MergeWorker Inline Implementations
+// =========================
 
 // =========================
 // Global Insert API
@@ -771,8 +768,10 @@ inline void MergeWorker::run_once() {
     return;
   }
 
-  constexpr size_t kLeafCount = SBTree::kLeafCount;
-  std::array<std::vector<Record>, kLeafCount> leaf_batches;
+  const size_t kLeafCount = leaf_batches_.size();
+  for (auto &batch : leaf_batches_) {
+    batch.clear();
+  }
 
   // 1) 扫描所有 SEALED buffer，把 slot 中的数据按 leaf 聚合到 leaf_batches
   for (int bi = 0; bi < 2; ++bi) {
@@ -802,7 +801,7 @@ inline void MergeWorker::run_once() {
       }
 
       // Optimization: skip per-slot sorting, let leaf-level sort handle it
-      route_slot_to_batches(tree_, s, leaf_batches);
+      route_slot_to_batches(tree_, s, leaf_batches_);
       // 这个 slot 的内容已经完全挪到 leaf_batches 里了
       s->hwm.store(0, std::memory_order_release);
       s->state.store(SLOT_STATE_CONSUMED, std::memory_order_release);
@@ -811,24 +810,24 @@ inline void MergeWorker::run_once() {
 
   uint64_t total_in_batches = 0;
   for (size_t leaf_idx = 0; leaf_idx < kLeafCount; ++leaf_idx) {
-    total_in_batches += leaf_batches[leaf_idx].size();
+    total_in_batches += leaf_batches_[leaf_idx].size();
   }
 
   // 2) 对每个 leaf 的 batch sort 一次，然后 merge_runs 一次
   // 小批量时走单线程，大批量时才并行，避免频繁创建/销毁线程的开销。
   std::vector<size_t> leaf_indices_to_merge;
   for (size_t leaf_idx = 0; leaf_idx < kLeafCount; ++leaf_idx) {
-    if (!leaf_batches[leaf_idx].empty()) {
+    if (!leaf_batches_[leaf_idx].empty()) {
       leaf_indices_to_merge.push_back(leaf_idx);
     }
   }
 
   // 阈值：总 batch 数较少或待处理 leaf 数量很小时，直接在当前线程顺序处理。
-  constexpr uint64_t kParallelThreshold = 10'000;
+  constexpr uint64_t kParallelThreshold = 50'000;
   if (leaf_indices_to_merge.size() <= 1 ||
       total_in_batches < kParallelThreshold) {
     for (size_t leaf_idx : leaf_indices_to_merge) {
-      auto &batch = leaf_batches[leaf_idx];
+      auto &batch = leaf_batches_[leaf_idx];
       std::sort(batch.begin(), batch.end(),
                 [](const Record &a, const Record &b) { return a.key < b.key; });
       SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
@@ -838,8 +837,8 @@ inline void MergeWorker::run_once() {
     // 大批量场景：并行处理每个 leaf 的 merge。
     std::vector<std::thread> merge_workers;
     for (size_t leaf_idx : leaf_indices_to_merge) {
-      merge_workers.emplace_back([this, leaf_idx, &leaf_batches]() {
-        auto &batch = leaf_batches[leaf_idx];
+      merge_workers.emplace_back([this, leaf_idx]() {
+        auto &batch = leaf_batches_[leaf_idx];
         std::sort(
             batch.begin(), batch.end(),
             [](const Record &a, const Record &b) { return a.key < b.key; });
@@ -925,7 +924,7 @@ inline void Engine::flush_thread_local() {
 class Flipper {
 public:
   // 构造函数：接收 buffer manager、tree、以及 flip 间隔（毫秒）
-  Flipper(BufferManager *bm, SBTree *tree, uint32_t flip_interval_ms = 10)
+  Flipper(BufferManager *bm, SBTree *tree, uint32_t flip_interval_ms = 50)
       : bm_(bm), tree_(tree), flip_interval_ms_(flip_interval_ms),
         running_(false), worker_thread_(nullptr) {}
 
