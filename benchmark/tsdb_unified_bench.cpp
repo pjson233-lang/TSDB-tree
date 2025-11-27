@@ -839,7 +839,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  int flip_interval_ms = 50;
+  int flip_interval_ms = 20;
   if (argc >= 3) {
     int v = std::atoi(argv[2]);
     if (v > 0 && v <= 1000) {

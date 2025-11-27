@@ -1025,7 +1025,7 @@ inline void Engine::flush_thread_local() {
 class Flipper {
 public:
   // 构造函数：接收 buffer manager、tree、以及 flip 间隔（毫秒）
-  Flipper(BufferManager *bm, SBTree *tree, uint32_t flip_interval_ms = 50)
+  Flipper(BufferManager *bm, SBTree *tree, uint32_t flip_interval_ms = 20)
       : bm_(bm), tree_(tree), flip_interval_ms_(flip_interval_ms),
         running_(false), worker_thread_(nullptr) {}
 
