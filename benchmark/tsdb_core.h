@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdlib> // aligned_alloc, free
+#include <deque>
 #include <functional>
 #include <limits> // for std::numeric_limits
 #include <mutex>
@@ -318,12 +319,9 @@ class SBTreeLeaf {
 public:
   // min_key_ = UINT64_MAX, max_key_ = 0 indicates empty leaf (no data yet).
   // After first merge, min_key_ and max_key_ will be set to valid values.
-  SBTreeLeaf() : min_key_(std::numeric_limits<uint64_t>::max()), max_key_(0) {}
+  SBTreeLeaf();
 
   void merge_runs(const std::vector<Record> &newrun);
-
-  // testing helper (only safe when merge worker is stopped)
-  const std::vector<Record> &data() const { return data_; }
 
   uint64_t min_key() const;
   uint64_t max_key() const;
@@ -334,8 +332,13 @@ public:
   size_t size() const;
 
 private:
+  void compact_segments_locked();
+  void update_min_max_locked();
+
   mutable std::shared_mutex mutex_;
-  std::vector<Record> data_;
+  std::deque<std::vector<Record>> segments_;
+  size_t total_records_;
+  static constexpr size_t kMaxSegments = 8;
   uint64_t min_key_; // 最小 key（用于 range 查询）
   uint64_t max_key_; // 最大 key（用于 range 查询）
 };
@@ -614,6 +617,149 @@ inline std::vector<Record> Reader::range_query(uint64_t key_lo,
 // Engine Inline Implementations
 // =========================
 
+inline SBTreeLeaf::SBTreeLeaf()
+    : total_records_(0), min_key_(std::numeric_limits<uint64_t>::max()),
+      max_key_(0) {}
+
+inline void SBTreeLeaf::compact_segments_locked() {
+  while (segments_.size() > kMaxSegments) {
+    if (segments_.size() < 2) {
+      break;
+    }
+    size_t best_idx = 0;
+    size_t best_cost = std::numeric_limits<size_t>::max();
+    for (size_t i = 0; i + 1 < segments_.size(); ++i) {
+      size_t cost = segments_[i].size() + segments_[i + 1].size();
+      if (cost < best_cost) {
+        best_cost = cost;
+        best_idx = i;
+      }
+    }
+    auto first = segments_.begin() + static_cast<std::ptrdiff_t>(best_idx);
+    auto second = first + 1;
+    std::vector<Record> merged;
+    merged.reserve(first->size() + second->size());
+    std::merge(first->begin(), first->end(), second->begin(), second->end(),
+               std::back_inserter(merged),
+               [](const Record &a, const Record &b) { return a.key < b.key; });
+    *first = std::move(merged);
+    segments_.erase(second);
+  }
+  update_min_max_locked();
+}
+
+inline void SBTreeLeaf::update_min_max_locked() {
+  if (segments_.empty()) {
+    min_key_ = std::numeric_limits<uint64_t>::max();
+    max_key_ = 0;
+    return;
+  }
+  uint64_t new_min = std::numeric_limits<uint64_t>::max();
+  uint64_t new_max = 0;
+  for (const auto &segment : segments_) {
+    if (segment.empty()) {
+      continue;
+    }
+    new_min = std::min(new_min, segment.front().key);
+    new_max = std::max(new_max, segment.back().key);
+  }
+  if (new_min == std::numeric_limits<uint64_t>::max()) {
+    min_key_ = std::numeric_limits<uint64_t>::max();
+    max_key_ = 0;
+  } else {
+    min_key_ = new_min;
+    max_key_ = new_max;
+  }
+}
+
+inline void SBTreeLeaf::merge_runs(const std::vector<Record> &newrun) {
+  if (newrun.empty()) {
+    return;
+  }
+
+  std::unique_lock<std::shared_mutex> lock(mutex_);
+
+  if (segments_.empty()) {
+    segments_.push_back(newrun);
+  } else if (!segments_.back().empty() &&
+             segments_.back().back().key <= newrun.front().key) {
+    segments_.push_back(newrun);
+  } else if (!segments_.front().empty() &&
+             newrun.back().key <= segments_.front().front().key) {
+    segments_.push_front(newrun);
+  } else {
+    auto pos = segments_.begin();
+    while (pos != segments_.end() &&
+           (pos->empty() || pos->front().key <= newrun.front().key)) {
+      ++pos;
+    }
+    segments_.insert(pos, newrun);
+  }
+
+  total_records_ += newrun.size();
+  update_min_max_locked();
+
+  if (segments_.size() > kMaxSegments) {
+    compact_segments_locked();
+  }
+}
+
+inline uint64_t SBTreeLeaf::min_key() const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  return min_key_;
+}
+
+inline uint64_t SBTreeLeaf::max_key() const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  return max_key_;
+}
+
+inline void SBTreeLeaf::snapshot_all(std::vector<Record> &out) const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  const size_t base = out.size();
+  for (const auto &segment : segments_) {
+    out.insert(out.end(), segment.begin(), segment.end());
+  }
+  if (out.size() > base) {
+    std::sort(out.begin() + base, out.end(),
+              [](const Record &a, const Record &b) { return a.key < b.key; });
+  }
+}
+
+inline void SBTreeLeaf::scan_range(uint64_t key_lo, uint64_t key_hi,
+                                   std::vector<Record> &out) const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  const size_t base = out.size();
+  bool appended = false;
+  for (const auto &segment : segments_) {
+    if (segment.empty()) {
+      continue;
+    }
+    if (segment.back().key < key_lo || segment.front().key > key_hi) {
+      continue;
+    }
+    auto it_lo =
+        std::lower_bound(segment.begin(), segment.end(), key_lo,
+                         [](const Record &r, uint64_t k) { return r.key < k; });
+    auto it_hi =
+        std::upper_bound(segment.begin(), segment.end(), key_hi,
+                         [](uint64_t k, const Record &r) { return k < r.key; });
+    if (it_lo != it_hi) {
+      out.insert(out.end(), it_lo, it_hi);
+      appended = true;
+    }
+  }
+  if (appended) {
+    std::sort(out.begin() + base, out.end(),
+              [](const Record &a, const Record &b) { return a.key < b.key; });
+  }
+}
+
+inline size_t SBTreeLeaf::size() const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  return total_records_;
+}
+
 inline SBTree::SBTree() = default;
 
 inline SBTreeLeaf *SBTree::locate_leaf(uint64_t key) {
@@ -638,89 +784,6 @@ inline void SBTree::merge_run_into_leaf(SBTreeLeaf *leaf,
     return;
   }
   leaf->merge_runs(run);
-}
-
-inline void SBTreeLeaf::merge_runs(const std::vector<Record> &newrun) {
-  if (newrun.empty()) {
-    return;
-  }
-
-  std::unique_lock<std::shared_mutex> lock(mutex_);
-
-  if (data_.empty()) {
-    data_ = newrun;
-  } else if (data_.back().key <= newrun.front().key) {
-    // Fast path: new run is strictly after existing data, just append.
-    data_.insert(data_.end(), newrun.begin(), newrun.end());
-  } else {
-    // General path: merge two sorted sequences.
-    std::vector<Record> merged;
-    merged.reserve(data_.size() + newrun.size());
-
-    size_t i = 0;
-    size_t j = 0;
-
-    while (i < data_.size() && j < newrun.size()) {
-      if (data_[i].key <= newrun[j].key) {
-        merged.push_back(data_[i++]);
-      } else {
-        merged.push_back(newrun[j++]);
-      }
-    }
-    while (i < data_.size()) {
-      merged.push_back(data_[i++]);
-    }
-    while (j < newrun.size()) {
-      merged.push_back(newrun[j++]);
-    }
-
-    data_.swap(merged);
-  }
-
-  // 维护 min_key_ 和 max_key_ 用于 range 查询
-  if (!data_.empty()) {
-    min_key_ = data_.front().key;
-    max_key_ = data_.back().key;
-  } else {
-    min_key_ = std::numeric_limits<uint64_t>::max();
-    max_key_ = 0;
-  }
-}
-
-inline uint64_t SBTreeLeaf::min_key() const {
-  std::shared_lock<std::shared_mutex> lock(mutex_);
-  return min_key_;
-}
-
-inline uint64_t SBTreeLeaf::max_key() const {
-  std::shared_lock<std::shared_mutex> lock(mutex_);
-  return max_key_;
-}
-
-inline void SBTreeLeaf::snapshot_all(std::vector<Record> &out) const {
-  std::shared_lock<std::shared_mutex> lock(mutex_);
-  out.insert(out.end(), data_.begin(), data_.end());
-}
-
-inline void SBTreeLeaf::scan_range(uint64_t key_lo, uint64_t key_hi,
-                                   std::vector<Record> &out) const {
-  std::shared_lock<std::shared_mutex> lock(mutex_);
-  if (data_.empty() || max_key_ < key_lo || min_key_ > key_hi) {
-    return;
-  }
-
-  auto it_lo =
-      std::lower_bound(data_.begin(), data_.end(), key_lo,
-                       [](const Record &r, uint64_t k) { return r.key < k; });
-  auto it_hi =
-      std::upper_bound(data_.begin(), data_.end(), key_hi,
-                       [](uint64_t k, const Record &r) { return k < r.key; });
-  out.insert(out.end(), it_lo, it_hi);
-}
-
-inline size_t SBTreeLeaf::size() const {
-  std::shared_lock<std::shared_mutex> lock(mutex_);
-  return data_.size();
 }
 
 inline MergeWorker::MergeWorker(BufferManager *mgr, SBTree *tree)
@@ -838,47 +901,55 @@ inline void MergeWorker::run_once() {
     }
   }
 
-  uint64_t total_in_batches = 0;
-  for (size_t leaf_idx = 0; leaf_idx < kLeafCount; ++leaf_idx) {
-    total_in_batches += leaf_batches_[leaf_idx].size();
-  }
-
   // 2) 对每个 leaf 的 batch sort 一次，然后 merge_runs 一次
-  // 小批量时走单线程，大批量时才并行，避免频繁创建/销毁线程的开销。
   std::vector<size_t> leaf_indices_to_merge;
+  leaf_indices_to_merge.reserve(kLeafCount);
   for (size_t leaf_idx = 0; leaf_idx < kLeafCount; ++leaf_idx) {
     if (!leaf_batches_[leaf_idx].empty()) {
       leaf_indices_to_merge.push_back(leaf_idx);
     }
   }
 
-  // 阈值：总 batch 数较少或待处理 leaf 数量很小时，直接在当前线程顺序处理。
-  constexpr uint64_t kParallelThreshold = 50'000;
-  if (leaf_indices_to_merge.size() <= 1 ||
-      total_in_batches < kParallelThreshold) {
-    for (size_t leaf_idx : leaf_indices_to_merge) {
-      auto &batch = leaf_batches_[leaf_idx];
-      std::sort(batch.begin(), batch.end(),
-                [](const Record &a, const Record &b) { return a.key < b.key; });
-      SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
-      tree_->merge_run_into_leaf(leaf, batch);
+  if (leaf_indices_to_merge.empty()) {
+    return;
+  }
+
+  auto merge_task = [&](size_t leaf_idx) {
+    auto &batch = leaf_batches_[leaf_idx];
+    std::sort(batch.begin(), batch.end(),
+              [](const Record &a, const Record &b) { return a.key < b.key; });
+    SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
+    tree_->merge_run_into_leaf(leaf, batch);
+  };
+
+  if (leaf_indices_to_merge.size() == 1) {
+    merge_task(leaf_indices_to_merge.front());
+    return;
+  }
+
+  const size_t hw_threads =
+      std::max<size_t>(1, std::thread::hardware_concurrency());
+  const size_t worker_count =
+      std::min(hw_threads, leaf_indices_to_merge.size());
+  std::atomic<size_t> next{0};
+
+  auto worker_loop = [&]() {
+    while (true) {
+      size_t idx = next.fetch_add(1);
+      if (idx >= leaf_indices_to_merge.size()) {
+        break;
+      }
+      merge_task(leaf_indices_to_merge[idx]);
     }
-  } else {
-    // 大批量场景：并行处理每个 leaf 的 merge。
-    std::vector<std::thread> merge_workers;
-    for (size_t leaf_idx : leaf_indices_to_merge) {
-      merge_workers.emplace_back([this, leaf_idx]() {
-        auto &batch = leaf_batches_[leaf_idx];
-        std::sort(
-            batch.begin(), batch.end(),
-            [](const Record &a, const Record &b) { return a.key < b.key; });
-        SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
-        tree_->merge_run_into_leaf(leaf, batch);
-      });
-    }
-    for (auto &worker : merge_workers) {
-      worker.join();
-    }
+  };
+
+  std::vector<std::thread> merge_workers;
+  merge_workers.reserve(worker_count);
+  for (size_t i = 0; i < worker_count; ++i) {
+    merge_workers.emplace_back(worker_loop);
+  }
+  for (auto &worker : merge_workers) {
+    worker.join();
   }
 }
 
