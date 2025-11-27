@@ -166,7 +166,7 @@ uint64_t CountTreeRecords(const SBTree &tree) {
     if (!leaf) {
       continue;
     }
-    total += leaf->data().size();
+    total += leaf->size();
   }
   return total;
 }

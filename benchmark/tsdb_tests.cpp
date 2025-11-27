@@ -27,7 +27,7 @@ uint64_t CountTreeRecords(const SBTree &tree) {
     if (!leaf) {
       continue;
     }
-    total += leaf->data().size();
+    total += leaf->size();
   }
   return total;
 }
@@ -153,4 +153,3 @@ int main() {
   std::cout << "All tsdb_core tests passed.\n";
   return 0;
 }
-

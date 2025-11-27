@@ -7,6 +7,8 @@
 #include <cstdlib> // aligned_alloc, free
 #include <functional>
 #include <limits> // for std::numeric_limits
+#include <mutex>
+#include <shared_mutex>
 #include <thread>
 #include <vector>
 
@@ -320,14 +322,19 @@ public:
 
   void merge_runs(const std::vector<Record> &newrun);
 
-  // testing helper
+  // testing helper (only safe when merge worker is stopped)
   const std::vector<Record> &data() const { return data_; }
 
-  // range query support
-  uint64_t min_key() const { return min_key_; }
-  uint64_t max_key() const { return max_key_; }
+  uint64_t min_key() const;
+  uint64_t max_key() const;
+
+  void snapshot_all(std::vector<Record> &out) const;
+  void scan_range(uint64_t key_lo, uint64_t key_hi,
+                  std::vector<Record> &out) const;
+  size_t size() const;
 
 private:
+  mutable std::shared_mutex mutex_;
   std::vector<Record> data_;
   uint64_t min_key_; // 最小 key（用于 range 查询）
   uint64_t max_key_; // 最大 key（用于 range 查询）
@@ -451,8 +458,7 @@ private:
       if (!leaf) {
         continue;
       }
-      const auto &leaf_data = leaf->data();
-      tree_data.insert(tree_data.end(), leaf_data.begin(), leaf_data.end());
+      leaf->snapshot_all(tree_data);
     }
 
     // 2) 从 RDS（sealed buffer 中的 sealed slot）聚合数据
@@ -536,21 +542,7 @@ inline std::vector<Record> Reader::range_query(uint64_t key_lo,
       continue;
     }
 
-    const auto &data = leaf->data();
-    if (data.empty())
-      continue;
-
-    // 使用二分查找在 leaf 内定位 [key_lo, key_hi] 的子区间，然后一次性拷贝
-    auto it_lo =
-        std::lower_bound(data.begin(), data.end(), key_lo,
-                         [](const Record &r, uint64_t k) { return r.key < k; });
-    auto it_hi =
-        std::upper_bound(data.begin(), data.end(), key_hi,
-                         [](uint64_t k, const Record &r) { return k < r.key; });
-
-    for (auto it = it_lo; it != it_hi; ++it) {
-      tree_part.push_back(*it);
-    }
+    leaf->scan_range(key_lo, key_hi, tree_part);
   }
 
   // === RDS part: linear scan with filter ===
@@ -653,6 +645,8 @@ inline void SBTreeLeaf::merge_runs(const std::vector<Record> &newrun) {
     return;
   }
 
+  std::unique_lock<std::shared_mutex> lock(mutex_);
+
   if (data_.empty()) {
     data_ = newrun;
   } else if (data_.back().key <= newrun.front().key) {
@@ -691,6 +685,42 @@ inline void SBTreeLeaf::merge_runs(const std::vector<Record> &newrun) {
     min_key_ = std::numeric_limits<uint64_t>::max();
     max_key_ = 0;
   }
+}
+
+inline uint64_t SBTreeLeaf::min_key() const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  return min_key_;
+}
+
+inline uint64_t SBTreeLeaf::max_key() const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  return max_key_;
+}
+
+inline void SBTreeLeaf::snapshot_all(std::vector<Record> &out) const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  out.insert(out.end(), data_.begin(), data_.end());
+}
+
+inline void SBTreeLeaf::scan_range(uint64_t key_lo, uint64_t key_hi,
+                                   std::vector<Record> &out) const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  if (data_.empty() || max_key_ < key_lo || min_key_ > key_hi) {
+    return;
+  }
+
+  auto it_lo =
+      std::lower_bound(data_.begin(), data_.end(), key_lo,
+                       [](const Record &r, uint64_t k) { return r.key < k; });
+  auto it_hi =
+      std::upper_bound(data_.begin(), data_.end(), key_hi,
+                       [](uint64_t k, const Record &r) { return k < r.key; });
+  out.insert(out.end(), it_lo, it_hi);
+}
+
+inline size_t SBTreeLeaf::size() const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  return data_.size();
 }
 
 inline MergeWorker::MergeWorker(BufferManager *mgr, SBTree *tree)
