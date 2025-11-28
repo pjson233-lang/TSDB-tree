@@ -8,6 +8,7 @@
 #include <deque>
 #include <functional>
 #include <limits> // for std::numeric_limits
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <thread>
@@ -45,6 +46,131 @@ struct Record {
   uint64_t key;   // timestamp or logical key
   uint64_t value; // payload
   uint32_t epoch; // optional
+};
+
+// =========================
+// DataBlock (SB-Tree style)
+// =========================
+
+struct DataBlock {
+  static constexpr size_t kBlockBytes = 4096;
+  static constexpr size_t kMaxEntries = 256; // 256 * 8 bytes keys + 256 * 8
+                                             // bytes values = 4KB
+  static constexpr size_t kBucketSize = 64;
+  static constexpr size_t kBucketCount =
+      (kMaxEntries + kBucketSize - 1) / kBucketSize;
+
+  uint32_t count;
+  uint64_t min_key;
+  uint64_t max_key;
+
+  std::array<uint64_t, kMaxEntries> keys;
+  std::array<uint64_t, kMaxEntries> values;
+
+  std::array<uint64_t, kBucketCount> bucket_min_keys;
+  std::array<uint16_t, kBucketCount> bucket_offsets;
+  uint16_t bucket_count;
+
+  DataBlock() : count(0), min_key(0), max_key(0), bucket_count(0) {}
+
+  inline void clear() {
+    count = 0;
+    min_key = std::numeric_limits<uint64_t>::max();
+    max_key = 0;
+    bucket_count = 0;
+  }
+
+  // Fill block from run[start:], returns next position in run
+  inline size_t fill_from_run(const std::vector<Record> &run, size_t start) {
+    clear();
+    if (start >= run.size()) {
+      return start;
+    }
+    size_t idx = 0;
+    min_key = run[start].key;
+    while (start < run.size() && idx < kMaxEntries) {
+      keys[idx] = run[start].key;
+      values[idx] = run[start].value;
+      ++idx;
+      ++start;
+    }
+    count = static_cast<uint32_t>(idx);
+    max_key = keys[count - 1];
+    build_index();
+    return start;
+  }
+
+  inline void build_index() {
+    if (count == 0) {
+      bucket_count = 0;
+      return;
+    }
+    bucket_count =
+        static_cast<uint16_t>((count + kBucketSize - 1) / kBucketSize);
+    for (uint16_t b = 0; b < bucket_count; ++b) {
+      size_t offset = static_cast<size_t>(b) * kBucketSize;
+      if (offset >= count) {
+        offset = count - 1;
+      }
+      bucket_offsets[b] = static_cast<uint16_t>(offset);
+      bucket_min_keys[b] = keys[offset];
+    }
+  }
+
+  inline bool lookup(uint64_t key, Record &out) const {
+    if (count == 0 || key < min_key || key > max_key) {
+      return false;
+    }
+    uint16_t b = 0;
+    if (bucket_count > 0) {
+      auto it = std::upper_bound(bucket_min_keys.begin(),
+                                 bucket_min_keys.begin() + bucket_count, key);
+      if (it == bucket_min_keys.begin()) {
+        b = 0;
+      } else {
+        b = static_cast<uint16_t>((it - bucket_min_keys.begin()) - 1);
+      }
+    }
+    size_t start = bucket_offsets[b];
+    size_t end = std::min(static_cast<size_t>(count), start + kBucketSize);
+    for (size_t i = start; i < end; ++i) {
+      if (keys[i] == key) {
+        out.key = keys[i];
+        out.value = values[i];
+        out.epoch = 0;
+        return true;
+      }
+      if (keys[i] > key) {
+        break;
+      }
+    }
+    return false;
+  }
+
+  inline void scan_range(uint64_t key_lo, uint64_t key_hi,
+                         std::vector<Record> &out) const {
+    if (count == 0 || key_hi < min_key || key_lo > max_key) {
+      return;
+    }
+    size_t start_idx = 0;
+    if (bucket_count > 0) {
+      auto it =
+          std::upper_bound(bucket_min_keys.begin(),
+                           bucket_min_keys.begin() + bucket_count, key_lo);
+      if (it == bucket_min_keys.begin()) {
+        start_idx = 0;
+      } else {
+        start_idx = bucket_offsets[(it - bucket_min_keys.begin()) - 1];
+      }
+    }
+    // advance start to first >= key_lo
+    while (start_idx < count && keys[start_idx] < key_lo) {
+      ++start_idx;
+    }
+    for (size_t i = start_idx; i < count && keys[i] <= key_hi; ++i) {
+      out.push_back(Record{keys[i], values[i], 0});
+    }
+  }
 };
 
 // Max number of records that can fit into one slot of size SLOT_SIZE_BYTES.
@@ -315,16 +441,6 @@ inline void BufferManager::seal_all_slots_for_flush() {
   }
 }
 
-// =========================
-// SegmentIterator (for k-way merge in SBTreeLeaf)
-// =========================
-
-struct SegmentIterator {
-  const std::vector<Record> *seg; // 指向 segment 的指针
-  size_t idx;                     // 当前位置
-  size_t end_idx;                 // 结束位置（用于 scan_range 的边界控制）
-};
-
 class SBTreeLeaf {
 public:
   // min_key_ = UINT64_MAX, max_key_ = 0 indicates empty leaf (no data yet).
@@ -343,14 +459,18 @@ public:
   bool lookup(uint64_t key, Record &out) const;
   size_t size() const;
 
+  // DataBlock 访问接口
+  size_t block_count() const;
+  DataBlock *block_at(size_t idx);
+  const DataBlock *block_at(size_t idx) const;
+
 private:
-  void compact_segments_locked();
+  void insert_block_locked(std::unique_ptr<DataBlock> block);
   void update_min_max_locked();
 
   mutable std::shared_mutex mutex_;
-  std::deque<std::vector<Record>> segments_;
+  std::vector<std::unique_ptr<DataBlock>> blocks_;
   size_t total_records_;
-  static constexpr size_t kMaxSegments = 8;
   uint64_t min_key_; // 最小 key（用于 range 查询）
   uint64_t max_key_; // 最大 key（用于 range 查询）
 };
@@ -795,47 +915,60 @@ inline SBTreeLeaf::SBTreeLeaf()
     : total_records_(0), min_key_(std::numeric_limits<uint64_t>::max()),
       max_key_(0) {}
 
-inline void SBTreeLeaf::compact_segments_locked() {
-  while (segments_.size() > kMaxSegments) {
-    if (segments_.size() < 2) {
-      break;
-    }
-    size_t best_idx = 0;
-    size_t best_cost = std::numeric_limits<size_t>::max();
-    for (size_t i = 0; i + 1 < segments_.size(); ++i) {
-      size_t cost = segments_[i].size() + segments_[i + 1].size();
-      if (cost < best_cost) {
-        best_cost = cost;
-        best_idx = i;
-      }
-    }
-    auto first = segments_.begin() + static_cast<std::ptrdiff_t>(best_idx);
-    auto second = first + 1;
-    std::vector<Record> merged;
-    merged.reserve(first->size() + second->size());
-    std::merge(first->begin(), first->end(), second->begin(), second->end(),
-               std::back_inserter(merged),
-               [](const Record &a, const Record &b) { return a.key < b.key; });
-    *first = std::move(merged);
-    segments_.erase(second);
+inline size_t SBTreeLeaf::block_count() const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  return blocks_.size();
+}
+
+inline DataBlock *SBTreeLeaf::block_at(size_t idx) {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  if (idx >= blocks_.size()) {
+    return nullptr;
   }
+  return blocks_[idx].get();
+}
+
+inline const DataBlock *SBTreeLeaf::block_at(size_t idx) const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  if (idx >= blocks_.size()) {
+    return nullptr;
+  }
+  return blocks_[idx].get();
+}
+
+inline void SBTreeLeaf::insert_block_locked(std::unique_ptr<DataBlock> block) {
+  if (!block || block->count == 0) {
+    return;
+  }
+
+  uint32_t block_count = block->count;
+
+  // 找到插入位置（保持 blocks 按 min_key 有序）
+  auto pos = blocks_.begin();
+  while (pos != blocks_.end() && (*pos)->min_key < block->min_key) {
+    ++pos;
+  }
+  blocks_.insert(pos, std::move(block));
+
+  // 更新 min/max 和 total_records
+  total_records_ += block_count;
   update_min_max_locked();
 }
 
 inline void SBTreeLeaf::update_min_max_locked() {
-  if (segments_.empty()) {
+  if (blocks_.empty()) {
     min_key_ = std::numeric_limits<uint64_t>::max();
     max_key_ = 0;
     return;
   }
   uint64_t new_min = std::numeric_limits<uint64_t>::max();
   uint64_t new_max = 0;
-  for (const auto &segment : segments_) {
-    if (segment.empty()) {
+  for (const auto &block : blocks_) {
+    if (!block || block->count == 0) {
       continue;
     }
-    new_min = std::min(new_min, segment.front().key);
-    new_max = std::max(new_max, segment.back().key);
+    new_min = std::min(new_min, block->min_key);
+    new_max = std::max(new_max, block->max_key);
   }
   if (new_min == std::numeric_limits<uint64_t>::max()) {
     min_key_ = std::numeric_limits<uint64_t>::max();
@@ -853,54 +986,12 @@ inline void SBTreeLeaf::merge_runs(const std::vector<Record> &newrun) {
 
   std::unique_lock<std::shared_mutex> lock(mutex_);
 
-  uint64_t run_min = newrun.front().key;
-  uint64_t run_max = newrun.back().key;
-
-  if (segments_.empty()) {
-    segments_.push_back(newrun);
-    min_key_ = run_min;
-    max_key_ = run_max;
-  } else if (!segments_.back().empty() &&
-             segments_.back().back().key <= newrun.front().key) {
-    // 顺序 append：尝试直接插入到最后一个 segment（如果容量足够）
-    auto &last = segments_.back();
-    if (last.capacity() >= last.size() + newrun.size()) {
-      // 容量足够，直接 append 到最后一个 segment
-      last.insert(last.end(), newrun.begin(), newrun.end());
-    } else {
-      // 容量不够，push_back 一个新 segment
-      segments_.push_back(newrun);
-    }
-    // 增量更新 max_key（min_key 不变）
-    max_key_ = run_max;
-  } else if (!segments_.front().empty() &&
-             newrun.back().key <= segments_.front().front().key) {
-    // 前插
-    segments_.push_front(newrun);
-    // 增量更新 min_key（max_key 不变）
-    min_key_ = run_min;
-  } else {
-    // 中间插入
-    auto pos = segments_.begin();
-    while (pos != segments_.end() &&
-           (pos->empty() || pos->front().key <= newrun.front().key)) {
-      ++pos;
-    }
-    segments_.insert(pos, newrun);
-    // 中间插入需要检查 min/max 是否变化
-    if (run_min < min_key_) {
-      min_key_ = run_min;
-    }
-    if (run_max > max_key_) {
-      max_key_ = run_max;
-    }
-  }
-
-  total_records_ += newrun.size();
-
-  // 只有在 compact 时才需要 full-scan 更新 min/max
-  if (segments_.size() > kMaxSegments) {
-    compact_segments_locked(); // 内部会调用 update_min_max_locked()
+  // newrun 已经是针对该 leaf 的有序 run，直接切成若干 DataBlock
+  size_t pos = 0;
+  while (pos < newrun.size()) {
+    std::unique_ptr<DataBlock> blk = std::make_unique<DataBlock>();
+    pos = blk->fill_from_run(newrun, pos);
+    insert_block_locked(std::move(blk));
   }
 }
 
@@ -921,44 +1012,14 @@ inline void SBTreeLeaf::snapshot_all(std::vector<Record> &out) const {
   }
 
   out.reserve(out.size() + total_records_);
-
-  // 初始化 SegmentIterator 数组
-  std::array<SegmentIterator, kMaxSegments> iters;
-  size_t iter_count = 0;
-  for (const auto &seg : segments_) {
-    if (!seg.empty()) {
-      iters[iter_count].seg = &seg;
-      iters[iter_count].idx = 0;
-      iters[iter_count].end_idx = seg.size();
-      ++iter_count;
+  for (const auto &blk_ptr : blocks_) {
+    const DataBlock *blk = blk_ptr.get();
+    if (!blk || blk->count == 0) {
+      continue;
     }
-  }
-  if (iter_count == 0) {
-    return;
-  }
-
-  // k 路归并（k <= 8，使用线性查找最小 key，比堆更 cache 友好）
-  while (true) {
-    int best = -1;
-    uint64_t best_key = std::numeric_limits<uint64_t>::max();
-    for (size_t i = 0; i < iter_count; ++i) {
-      auto &it = iters[i];
-      if (it.idx >= it.end_idx) {
-        continue; // 该 segment 已耗尽
-      }
-      uint64_t key = (*it.seg)[it.idx].key;
-      if (key < best_key) {
-        best_key = key;
-        best = static_cast<int>(i);
-      }
+    for (uint32_t i = 0; i < blk->count; ++i) {
+      out.push_back(Record{blk->keys[i], blk->values[i], 0});
     }
-    if (best == -1) {
-      break; // 所有 segment 都已耗尽
-    }
-
-    // 输出最小 key 的记录
-    const auto &seg = *iters[best].seg;
-    out.push_back(seg[iters[best].idx++]);
   }
 }
 
@@ -970,61 +1031,15 @@ inline void SBTreeLeaf::scan_range(uint64_t key_lo, uint64_t key_hi,
     return;
   }
 
-  // 初始化 SegmentIterator 数组，对每个 segment 定位范围
-  std::array<SegmentIterator, kMaxSegments> iters;
-  size_t iter_count = 0;
-  for (const auto &seg : segments_) {
-    if (seg.empty()) {
+  for (const auto &blk_ptr : blocks_) {
+    const DataBlock *blk = blk_ptr.get();
+    if (!blk || blk->count == 0) {
       continue;
     }
-    // Segment 级别剪枝
-    if (seg.back().key < key_lo || seg.front().key > key_hi) {
+    if (blk->max_key < key_lo || blk->min_key > key_hi) {
       continue;
     }
-
-    // 在 segment 内定位 [key_lo, key_hi] 的范围
-    auto it_lo =
-        std::lower_bound(seg.begin(), seg.end(), key_lo,
-                         [](const Record &r, uint64_t k) { return r.key < k; });
-    auto it_hi =
-        std::upper_bound(seg.begin(), seg.end(), key_hi,
-                         [](uint64_t k, const Record &r) { return k < r.key; });
-
-    if (it_lo != it_hi) {
-      iters[iter_count].seg = &seg;
-      iters[iter_count].idx = static_cast<size_t>(it_lo - seg.begin());
-      iters[iter_count].end_idx = static_cast<size_t>(it_hi - seg.begin());
-      ++iter_count;
-    }
-  }
-
-  if (iter_count == 0) {
-    return;
-  }
-
-  // k 路归并（k <= 8，使用线性查找最小 key）
-  while (true) {
-    int best = -1;
-    uint64_t best_key = std::numeric_limits<uint64_t>::max();
-    for (size_t i = 0; i < iter_count; ++i) {
-      auto &it = iters[i];
-      if (it.idx >= it.end_idx) {
-        continue; // 该 segment 的范围已耗尽
-      }
-      uint64_t key = (*it.seg)[it.idx].key;
-      // 确保 key 在范围内（双重检查，虽然理论上应该都在范围内）
-      if (key >= key_lo && key <= key_hi && key < best_key) {
-        best_key = key;
-        best = static_cast<int>(i);
-      }
-    }
-    if (best == -1) {
-      break; // 所有 segment 的范围都已耗尽
-    }
-
-    // 输出最小 key 的记录
-    const auto &seg = *iters[best].seg;
-    out.push_back(seg[iters[best].idx++]);
+    blk->scan_range(key_lo, key_hi, out);
   }
 }
 
@@ -1032,28 +1047,23 @@ inline bool SBTreeLeaf::lookup(uint64_t key, Record &out) const {
   std::shared_lock<std::shared_mutex> lock(mutex_);
 
   // 快速剪枝：如果 key 不在 leaf 的范围内，直接返回
-  if (segments_.empty() || key < min_key_ || key > max_key_) {
+  if (blocks_.empty() || key < min_key_ || key > max_key_) {
     return false;
   }
 
-  // 遍历所有 segments（一般就 1~几段）
-  for (const auto &seg : segments_) {
-    if (seg.empty()) {
+  // 遍历所有 DataBlock（一般就 1~几块）
+  for (const auto &blk_ptr : blocks_) {
+    const DataBlock *blk = blk_ptr.get();
+    if (!blk || blk->count == 0) {
       continue;
     }
 
-    // 利用 segment 的局部有序性做快速剪枝
-    if (key < seg.front().key || key > seg.back().key) {
+    // 利用 block 的 key 范围做快速剪枝
+    if (key < blk->min_key || key > blk->max_key) {
       continue;
     }
 
-    // 二分查找
-    auto it =
-        std::lower_bound(seg.begin(), seg.end(), key,
-                         [](const Record &r, uint64_t k) { return r.key < k; });
-
-    if (it != seg.end() && it->key == key) {
-      out = *it;
+    if (blk->lookup(key, out)) {
       return true;
     }
   }
