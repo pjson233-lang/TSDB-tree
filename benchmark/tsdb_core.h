@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdlib> // aligned_alloc, free
+#include <cstring> // memcpy
 #include <deque>
 #include <functional>
 #include <limits> // for std::numeric_limits
@@ -71,7 +72,9 @@ struct DataBlock {
   std::array<uint16_t, kBucketCount> bucket_offsets;
   uint16_t bucket_count;
 
-  DataBlock() : count(0), min_key(0), max_key(0), bucket_count(0) {}
+  DataBlock()
+      : count(0), min_key(std::numeric_limits<uint64_t>::max()), max_key(0),
+        bucket_count(0) {}
 
   inline void clear() {
     count = 0;
@@ -172,6 +175,77 @@ struct DataBlock {
     }
   }
 };
+
+// =========================
+// DataBlock Allocator (Memory Pool)
+// =========================
+
+class DataBlockAllocator {
+public:
+  DataBlockAllocator() {}
+
+  ~DataBlockAllocator() {}
+
+  // 分配一个 DataBlock（从 thread-local freelist 获取或新建）
+  DataBlock *allocate() {
+    // 先尝试从 thread-local freelist 获取
+    thread_local std::vector<DataBlock *> *tls_freelist = nullptr;
+    if (!tls_freelist) {
+      tls_freelist = new std::vector<DataBlock *>();
+      tls_freelist->reserve(64); // 预分配容量
+    }
+
+    if (!tls_freelist->empty()) {
+      DataBlock *blk = tls_freelist->back();
+      tls_freelist->pop_back();
+      blk->clear();
+      return blk;
+    }
+
+    // 如果 thread-local freelist 为空，分配新的 block
+    // 使用 new 分配，因为 DataBlock 包含 std::array，需要正确构造
+    DataBlock *blk = new DataBlock();
+    return blk;
+  }
+
+  // 释放一个 DataBlock（归还到 thread-local freelist）
+  void deallocate(DataBlock *blk) {
+    if (!blk) {
+      return;
+    }
+    // 归还到 thread-local freelist
+    thread_local std::vector<DataBlock *> *tls_freelist = nullptr;
+    if (!tls_freelist) {
+      tls_freelist = new std::vector<DataBlock *>();
+      tls_freelist->reserve(64);
+    }
+    // 限制 freelist 大小，避免内存泄漏
+    if (tls_freelist->size() < 128) {
+      tls_freelist->push_back(blk);
+    } else {
+      // 如果 freelist 太大，直接删除（避免内存泄漏）
+      delete blk;
+    }
+  }
+};
+
+// 全局 allocator 实例（简化设计，避免传递 allocator 指针）
+inline DataBlockAllocator &get_block_allocator() {
+  static DataBlockAllocator allocator;
+  return allocator;
+}
+
+// 自定义 deleter 用于 unique_ptr，归还到 allocator
+struct DataBlockDeleter {
+  void operator()(DataBlock *blk) const {
+    if (blk) {
+      get_block_allocator().deallocate(blk);
+    }
+  }
+};
+
+// 使用自定义 deleter 的 unique_ptr 类型
+using DataBlockPtr = std::unique_ptr<DataBlock, DataBlockDeleter>;
 
 // Max number of records that can fit into one slot of size SLOT_SIZE_BYTES.
 // This is the compile-time capacity used by writers (hwm limit).
@@ -465,11 +539,11 @@ public:
   const DataBlock *block_at(size_t idx) const;
 
 private:
-  void insert_block_locked(std::unique_ptr<DataBlock> block);
+  void insert_block_locked(DataBlockPtr block);
   void update_min_max_locked();
 
   mutable std::shared_mutex mutex_;
-  std::vector<std::unique_ptr<DataBlock>> blocks_;
+  std::vector<DataBlockPtr> blocks_;
   size_t total_records_;
   uint64_t min_key_; // 最小 key（用于 range 查询）
   uint64_t max_key_; // 最大 key（用于 range 查询）
@@ -936,7 +1010,7 @@ inline const DataBlock *SBTreeLeaf::block_at(size_t idx) const {
   return blocks_[idx].get();
 }
 
-inline void SBTreeLeaf::insert_block_locked(std::unique_ptr<DataBlock> block) {
+inline void SBTreeLeaf::insert_block_locked(DataBlockPtr block) {
   if (!block || block->count == 0) {
     return;
   }
@@ -986,13 +1060,90 @@ inline void SBTreeLeaf::merge_runs(const std::vector<Record> &newrun) {
 
   std::unique_lock<std::shared_mutex> lock(mutex_);
 
-  // newrun 已经是针对该 leaf 的有序 run，直接切成若干 DataBlock
-  size_t pos = 0;
-  while (pos < newrun.size()) {
-    std::unique_ptr<DataBlock> blk = std::make_unique<DataBlock>();
-    pos = blk->fill_from_run(newrun, pos);
-    insert_block_locked(std::move(blk));
+  // ----------------------------
+  // 1) 快路径：append-only 情况
+  //    - 当前 leaf 为空，或者新 run 的最小 key >= 当前 leaf 的 max_key_
+  //    - 对应正常 TS 工作负载（单调递增），直接在右侧追加即可
+  // ----------------------------
+  const uint64_t run_min = newrun.front().key;
+  const uint64_t run_max = newrun.back().key;
+
+  bool can_append_right = (total_records_ == 0) || (run_min >= max_key_);
+
+  if (can_append_right) {
+    size_t pos = 0;
+    while (pos < newrun.size()) {
+      DataBlock *raw_blk = get_block_allocator().allocate();
+      pos = raw_blk->fill_from_run(newrun, pos);
+      if (raw_blk->count == 0) {
+        get_block_allocator().deallocate(raw_blk);
+        break;
+      }
+      total_records_ += raw_blk->count;
+      blocks_.push_back(DataBlockPtr(raw_blk));
+    }
+
+    // 更新 leaf 的 min/max
+    if (total_records_ > 0) {
+      if (min_key_ == std::numeric_limits<uint64_t>::max()) {
+        // 第一次 merge
+        min_key_ = blocks_.front()->min_key;
+      }
+      max_key_ = std::max(max_key_, run_max);
+    }
+    return;
   }
+
+  // ----------------------------
+  // 2) 慢路径：存在乱序 / delayed data
+  //    - 为保证 snapshot_all / scan_range 的全局有序性，
+  //      我们重新构建整个 leaf：
+  //      1) 导出所有已有记录 + newrun
+  //      2) 一次 sort
+  //      3) 重新切成 DataBlock
+  // ----------------------------
+
+  // 2.1 把已有 blocks_ 中的数据 dump 出来
+  std::vector<Record> all;
+  all.reserve(total_records_ + newrun.size());
+
+  for (const auto &blk_ptr : blocks_) {
+    const DataBlock *blk = blk_ptr.get();
+    if (!blk || blk->count == 0) {
+      continue;
+    }
+    for (uint32_t i = 0; i < blk->count; ++i) {
+      all.push_back(Record{blk->keys[i], blk->values[i], 0});
+    }
+  }
+
+  // 2.2 把新 run 追加进去
+  all.insert(all.end(), newrun.begin(), newrun.end());
+
+  // 2.3 全量排序（按 key）
+  std::sort(all.begin(), all.end(),
+            [](const Record &a, const Record &b) { return a.key < b.key; });
+
+  // 2.4 清空旧 blocks，重新切块
+  blocks_.clear();
+  total_records_ = 0;
+  min_key_ = std::numeric_limits<uint64_t>::max();
+  max_key_ = 0;
+
+  size_t pos = 0;
+  while (pos < all.size()) {
+    DataBlock *raw_blk = get_block_allocator().allocate();
+    pos = raw_blk->fill_from_run(all, pos);
+    if (raw_blk->count == 0) {
+      get_block_allocator().deallocate(raw_blk);
+      break;
+    }
+    total_records_ += raw_blk->count;
+    blocks_.push_back(DataBlockPtr(raw_blk));
+  }
+
+  // 2.5 更新 leaf 级 min/max
+  update_min_max_locked();
 }
 
 inline uint64_t SBTreeLeaf::min_key() const {
