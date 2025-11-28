@@ -252,10 +252,10 @@ void GetThreadFunc(Reader *reader, double &elapsed_us, size_t &probe_count,
     // 每 10 个取 1 个，大约 10% 抽样
     for (size_t m = 0; m < tuples.size(); m += 10) {
       ++probe_count;
-      // 使用 range_query 做点查询
+      // 使用专用的 lookup 方法做点查询
       uint64_t key = MakeKey(tuples[m].series, tuples[m].ts);
-      auto results = reader->range_query(key, key);
-      if (!results.empty()) {
+      Record r;
+      if (reader->lookup(key, r)) {
         ++found_count;
       }
     }
@@ -379,7 +379,8 @@ void MixedThreadFunc(Engine *eng, Reader *reader, double &elapsed_us,
       if (!tuples.empty()) {
         size_t idx = idx_dist(rng);
         uint64_t key = MakeKey(tuples[idx].series, tuples[idx].ts);
-        reader->range_query_into(key, key, local_buf);
+        Record r;
+        (void)reader->lookup(key, r); // 使用专用的 lookup 方法
       }
       ++lookup_ops;
     }

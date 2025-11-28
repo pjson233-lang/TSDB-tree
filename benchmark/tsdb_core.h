@@ -339,6 +339,8 @@ public:
   void snapshot_all(std::vector<Record> &out) const;
   void scan_range(uint64_t key_lo, uint64_t key_hi,
                   std::vector<Record> &out) const;
+  // 精确查找一个 key，找到返回 true，并把结果写到 out
+  bool lookup(uint64_t key, Record &out) const;
   size_t size() const;
 
 private:
@@ -458,6 +460,9 @@ public:
   // buffer.
   void range_query_into(uint64_t key_lo, uint64_t key_hi,
                         std::vector<Record> &out) const;
+
+  // 专用 point lookup：只查一个 key，找到返回 true，并把结果写到 out
+  bool lookup(uint64_t key, Record &out) const;
 
 private:
   // Implementation of scan_all (moved to inline function below)
@@ -715,6 +720,73 @@ inline void Reader::range_query_into(uint64_t key_lo, uint64_t key_hi,
   }
 }
 
+inline bool Reader::lookup(uint64_t key, Record &out) const {
+  bool found = false;
+  Record best{};
+
+  // 1. 先查 tree 部分：只定位一个 leaf
+  if (tree_) {
+    SBTreeLeaf *leaf = tree_->locate_leaf(key);
+    if (leaf) {
+      Record r;
+      if (leaf->lookup(key, r)) {
+        best = r;
+        found = true;
+      }
+    }
+  }
+
+  // 2. 再查 buffer 部分：两个 buffer 中 SEALED 的 slot
+  // buffer 里的记录更"新"，所以如果找到，应该优先使用 buffer 的结果
+  if (bm_) {
+    for (int bi = 0; bi < 2; ++bi) {
+      const Buffer &buf = bm_->buffers[bi];
+      uint8_t bst = buf.state.load(std::memory_order_acquire);
+      if (bst != BUFFER_STATE_SEALED) {
+        continue;
+      }
+
+      const uint32_t slots = buf.slot_capacity;
+      for (uint32_t si = 0; si < slots; ++si) {
+        const Slot &s = buf.slots[si];
+        uint8_t st = s.state.load(std::memory_order_acquire);
+        if (st != SLOT_STATE_SEALED) {
+          continue;
+        }
+
+        // 用 slot 的 key range 快速过滤
+        uint64_t slot_min = s.min_key.load(std::memory_order_acquire);
+        uint64_t slot_max = s.max_key.load(std::memory_order_acquire);
+        if (key < slot_min || key > slot_max) {
+          continue;
+        }
+
+        uint16_t sz = s.hwm.load(std::memory_order_acquire);
+        if (sz == 0) {
+          continue;
+        }
+
+        const Record *recs = s.recs;
+
+        // slot 内一般就几十 / 几百条，线性扫即可
+        for (uint16_t i = 0; i < sz; ++i) {
+          if (recs[i].key == key) {
+            best = recs[i];
+            found = true;
+            // 如果以后引入 epoch / version，可以在这里比较"更新"的记录
+            // 目前 buffer 的数据更新，所以直接覆盖 tree 的结果
+          }
+        }
+      }
+    }
+  }
+
+  if (found) {
+    out = best;
+  }
+  return found;
+}
+
 // =========================
 // Engine Inline Implementations
 // =========================
@@ -954,6 +1026,38 @@ inline void SBTreeLeaf::scan_range(uint64_t key_lo, uint64_t key_hi,
     const auto &seg = *iters[best].seg;
     out.push_back(seg[iters[best].idx++]);
   }
+}
+
+inline bool SBTreeLeaf::lookup(uint64_t key, Record &out) const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+
+  // 快速剪枝：如果 key 不在 leaf 的范围内，直接返回
+  if (segments_.empty() || key < min_key_ || key > max_key_) {
+    return false;
+  }
+
+  // 遍历所有 segments（一般就 1~几段）
+  for (const auto &seg : segments_) {
+    if (seg.empty()) {
+      continue;
+    }
+
+    // 利用 segment 的局部有序性做快速剪枝
+    if (key < seg.front().key || key > seg.back().key) {
+      continue;
+    }
+
+    // 二分查找
+    auto it =
+        std::lower_bound(seg.begin(), seg.end(), key,
+                         [](const Record &r, uint64_t k) { return r.key < k; });
+
+    if (it != seg.end() && it->key == key) {
+      out = *it;
+      return true;
+    }
+  }
+  return false;
 }
 
 inline size_t SBTreeLeaf::size() const {

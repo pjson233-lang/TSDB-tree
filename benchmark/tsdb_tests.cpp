@@ -324,6 +324,57 @@ void TestRangeQueryInto() {
   std::cout << "[TestRangeQueryInto] passed\n";
 }
 
+void TestLookupCorrectness() {
+  std::cout << "[TestLookupCorrectness] start\n";
+  BufferManager bm(/*slots_per_buffer=*/8);
+  SBTree tree;
+  Engine eng(&bm, &tree);
+  MergeWorker worker(&bm, &tree);
+
+  // 插入一些数据
+  constexpr int kN = 1000;
+  for (int i = 0; i < kN; ++i) {
+    eng.insert(i, i);
+  }
+  eng.flush_thread_local();
+
+  // 执行一次 merge
+  bm.flip_buffers();
+  worker.run_once();
+  flush_all_and_merge_once(&bm, &tree);
+
+  Reader reader(&bm, &tree);
+
+  // 测试：验证 lookup 和 range_query 的结果一致性
+  for (int i = 0; i < kN; ++i) {
+    uint64_t key = static_cast<uint64_t>(i);
+
+    // 旧路径：range_query
+    auto via_range = reader.range_query(key, key);
+
+    // 新路径：lookup
+    Record via_lookup{};
+    bool found = reader.lookup(key, via_lookup);
+
+    // 验证结果一致
+    if (!via_range.empty()) {
+      assert(found);
+      assert(via_range[0].key == via_lookup.key);
+      assert(via_range[0].value == via_lookup.value);
+    } else {
+      assert(!found);
+    }
+  }
+
+  // 测试不存在的 key
+  Record not_found{};
+  assert(!reader.lookup(99999, not_found));
+  auto empty_range = reader.range_query(99999, 99999);
+  assert(empty_range.empty());
+
+  std::cout << "[TestLookupCorrectness] passed\n";
+}
+
 } // namespace
 
 int main() {
@@ -333,6 +384,7 @@ int main() {
   TestSnapshotAllCorrectness();
   TestScanRangeCorrectness();
   TestRangeQueryInto();
+  TestLookupCorrectness();
   std::cout << "All tsdb_core tests passed.\n";
   return 0;
 }
