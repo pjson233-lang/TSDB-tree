@@ -272,6 +272,10 @@ void ScanThreadFunc(Reader *reader, double &elapsed_us, size_t &scan_op_count,
   scan_op_count = 0;
   total_returned = 0;
 
+  // 本地 buffer 复用，减少分配开销
+  std::vector<Record> local_buf;
+  local_buf.reserve(256); // 初始估计容量
+
   std::mt19937_64 rng(123456 +
                       std::hash<std::thread::id>{}(std::this_thread::get_id()));
 
@@ -298,9 +302,9 @@ void ScanThreadFunc(Reader *reader, double &elapsed_us, size_t &scan_op_count,
       // 简化处理：使用较大的范围确保覆盖
       uint64_t end_key = start_key + count * kTimeStepMs * kNumSeries;
 
-      auto results = reader->range_query(start_key, end_key);
+      reader->range_query_into(start_key, end_key, local_buf);
       ++scan_op_count;
-      total_returned += std::min(count, results.size()); // 限制返回数量
+      total_returned += std::min(count, local_buf.size()); // 限制返回数量
     }
   }
 
@@ -316,6 +320,10 @@ void MixedThreadFunc(Engine *eng, Reader *reader, double &elapsed_us,
   insert_ops = 0;
   lookup_ops = 0;
   scan_ops = 0;
+
+  // 本地 buffer 复用，减少分配开销
+  std::vector<Record> local_buf;
+  local_buf.reserve(256); // 初始估计容量
 
   std::mt19937_64 rng(987654 +
                       std::hash<std::thread::id>{}(std::this_thread::get_id()));
@@ -349,7 +357,7 @@ void MixedThreadFunc(Engine *eng, Reader *reader, double &elapsed_us,
         uint64_t start_key = MakeKey(tuples[start_idx].series, tuples[start_idx].ts);
         size_t len = long_len_dist(rng);
         uint64_t end_key = start_key + len * kTimeStepMs * kNumSeries;
-        (void)reader->range_query(start_key, end_key);
+        reader->range_query_into(start_key, end_key, local_buf);
       }
       ++scan_ops;
     } else if (u < 0.9) {
@@ -361,7 +369,7 @@ void MixedThreadFunc(Engine *eng, Reader *reader, double &elapsed_us,
         uint64_t start_key = MakeKey(tuples[start_idx].series, tuples[start_idx].ts);
         size_t len = short_len_dist(rng);
         uint64_t end_key = start_key + len * kTimeStepMs * kNumSeries;
-        (void)reader->range_query(start_key, end_key);
+        reader->range_query_into(start_key, end_key, local_buf);
       }
       ++scan_ops;
     } else {
@@ -371,7 +379,7 @@ void MixedThreadFunc(Engine *eng, Reader *reader, double &elapsed_us,
       if (!tuples.empty()) {
         size_t idx = idx_dist(rng);
         uint64_t key = MakeKey(tuples[idx].series, tuples[idx].ts);
-        (void)reader->range_query(key, key);
+        reader->range_query_into(key, key, local_buf);
       }
       ++lookup_ops;
     }
