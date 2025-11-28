@@ -565,7 +565,6 @@ void RunLookupOnly(uint32_t num_threads) {
   BufferManager bm(slots_per_buffer);
   SBTree tree;
   Engine eng(&bm, &tree);
-  Reader reader(&bm, &tree);
 
   // 构建索引
   std::cout << "[BuildIndex] Building index..." << std::endl;
@@ -582,6 +581,9 @@ void RunLookupOnly(uint32_t num_threads) {
   }
   flush_all_and_merge_once(&bm, &tree);
   std::cout << "[BuildIndex] Done.\n" << std::endl;
+
+  // 使用 tree-only Reader（离线查询模式）
+  Reader reader(&tree);
 
   // 查询测试
   g_get_sensor_id.store(0, std::memory_order_relaxed);
@@ -645,7 +647,6 @@ void RunScanOnly(uint32_t num_threads) {
   BufferManager bm(slots_per_buffer);
   SBTree tree;
   Engine eng(&bm, &tree);
-  Reader reader(&bm, &tree);
 
   // 构建索引
   std::cout << "[BuildIndex] Building index..." << std::endl;
@@ -662,6 +663,9 @@ void RunScanOnly(uint32_t num_threads) {
   }
   flush_all_and_merge_once(&bm, &tree);
   std::cout << "[BuildIndex] Done.\n" << std::endl;
+
+  // 使用 tree-only Reader（离线查询模式）
+  Reader reader(&tree);
 
   // 扫描测试
   g_scan_sensor_id.store(0, std::memory_order_relaxed);

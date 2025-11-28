@@ -155,23 +155,45 @@ struct DataBlock {
     if (count == 0 || key_hi < min_key || key_lo > max_key) {
       return;
     }
+
     size_t start_idx = 0;
+    size_t end_idx = static_cast<size_t>(count);
+
+    // 使用 N-ary 索引定位起始和结束位置
     if (bucket_count > 0) {
-      auto it =
+      // 定位起始 bucket
+      auto it_lo =
           std::upper_bound(bucket_min_keys.begin(),
                            bucket_min_keys.begin() + bucket_count, key_lo);
-      if (it == bucket_min_keys.begin()) {
-        start_idx = 0;
-      } else {
-        start_idx = bucket_offsets[(it - bucket_min_keys.begin()) - 1];
+      if (it_lo != bucket_min_keys.begin()) {
+        size_t b_lo =
+            static_cast<size_t>((it_lo - bucket_min_keys.begin()) - 1);
+        start_idx = bucket_offsets[b_lo];
+      }
+
+      // 定位结束 bucket
+      auto it_hi =
+          std::upper_bound(bucket_min_keys.begin(),
+                           bucket_min_keys.begin() + bucket_count, key_hi);
+      if (it_hi != bucket_min_keys.begin()) {
+        size_t b_hi =
+            static_cast<size_t>((it_hi - bucket_min_keys.begin()) - 1);
+        end_idx =
+            std::min(static_cast<size_t>(count),
+                     static_cast<size_t>(bucket_offsets[b_hi]) + kBucketSize);
+      }
+
+      // 在起始 bucket 内精确定位到第一个 >= key_lo 的位置
+      while (start_idx < static_cast<size_t>(count) &&
+             keys[start_idx] < key_lo) {
+        ++start_idx;
       }
     }
-    // advance start to first >= key_lo
-    while (start_idx < count && keys[start_idx] < key_lo) {
-      ++start_idx;
-    }
-    for (size_t i = start_idx; i < count && keys[i] <= key_hi; ++i) {
-      out.push_back(Record{keys[i], values[i], 0});
+
+    // 扫描范围内的记录
+    for (size_t i = start_idx;
+         i < static_cast<size_t>(count) && keys[i] <= key_hi; ++i) {
+      out.emplace_back(Record{keys[i], values[i], 0});
     }
   }
 };
@@ -548,12 +570,26 @@ private:
   void insert_block_locked(DataBlockPtr block);
   void update_min_max_locked();
 
+  // 二分查找：找到第一个 max_key >= key 的 block 的下标
+  // blocks_ 已经按 min_key 有序，但查找时用 max_key 更精确
+  size_t lower_bound_block(uint64_t key) const {
+    auto it = std::lower_bound(blocks_.begin(), blocks_.end(), key,
+                               [](const DataBlockPtr &blk, uint64_t k) {
+                                 const DataBlock *b = blk.get();
+                                 return b && b->count > 0 && b->max_key < k;
+                               });
+    return static_cast<size_t>(it - blocks_.begin());
+  }
+
   mutable std::shared_mutex mutex_;
   std::vector<DataBlockPtr> blocks_;
   size_t total_records_;
   uint64_t min_key_; // 最小 key（用于 range 查询）
   uint64_t max_key_; // 最大 key（用于 range 查询）
 };
+
+// 全局变量：已合并到 tree 的最大 key（用于 RDS 剪枝优化）
+inline std::atomic<uint64_t> g_tree_max_merged_key{0};
 
 class SBTree {
 public:
@@ -564,6 +600,15 @@ public:
 
   // route by key to leaf
   SBTreeLeaf *locate_leaf(uint64_t key);
+
+  // 新增：根据 key 计算 leaf 下标
+  size_t leaf_index_for_key(uint64_t key) const noexcept;
+
+  // 新增：根据 key 获取对应的 leaf（mutable）
+  SBTreeLeaf *leaf_for_key(uint64_t key) noexcept;
+
+  // 新增：根据 key 获取对应的 leaf（const）
+  const SBTreeLeaf *leaf_for_key(uint64_t key) const noexcept;
 
   // merge run from RDS into a leaf
   void merge_run_into_leaf(SBTreeLeaf *leaf, const std::vector<Record> &run);
@@ -645,7 +690,12 @@ private:
 
 class Reader {
 public:
-  Reader(BufferManager *bm, SBTree *tree) : bm_(bm), tree_(tree) {}
+  Reader(BufferManager *bm, SBTree *tree, bool enable_rds = true)
+      : bm_(bm), tree_(tree), enable_rds_(enable_rds) {}
+
+  // 纯 tree 模式（离线查询）
+  explicit Reader(SBTree *tree)
+      : bm_(nullptr), tree_(tree), enable_rds_(false) {}
 
   // Full scan for testing freshness: merge Tree data from ALL leaves with
   // current SEALED RDS.
@@ -741,6 +791,7 @@ private:
 private:
   BufferManager *bm_;
   SBTree *tree_;
+  bool enable_rds_;
 };
 
 // =========================
@@ -758,26 +809,47 @@ inline std::vector<Record> Reader::range_query(uint64_t key_lo,
     return {};
   }
 
-  // === Tree part: use leaf min/max for pruning, binary search within range ===
-  const size_t leaf_cnt = tree_->leaf_count();
-  for (size_t li = 0; li < leaf_cnt; ++li) {
-    const SBTreeLeaf *leaf = tree_->leaf_at(li);
-    if (!leaf)
-      continue;
+  // === Tree part: 只访问相关 leaf ===
+  if (key_lo > key_hi) {
+    return {};
+  }
 
-    // Quick prune: no overlap with [key_lo, key_hi]
-    // Skip if leaf is completely below key_lo or completely above key_hi
-    // (Note: empty leaves have min_key=UINT64_MAX, max_key=0, which doesn't
-    // enter this condition)
-    if (leaf->max_key() < key_lo || leaf->min_key() > key_hi) {
-      continue;
+  if (tree_) {
+    size_t idx_lo = tree_->leaf_index_for_key(key_lo);
+    size_t idx_hi = tree_->leaf_index_for_key(key_hi);
+
+    if (idx_lo == idx_hi) {
+      // 大多数情况：单 series 的 time range，只访问一个 leaf
+      const SBTreeLeaf *leaf = tree_->leaf_at(idx_lo);
+      if (leaf) {
+        uint64_t leaf_min = leaf->min_key();
+        uint64_t leaf_max = leaf->max_key();
+        if (!(leaf_min > key_hi || leaf_max < key_lo)) {
+          leaf->scan_range(key_lo, key_hi, tree_part);
+        }
+      }
+    } else {
+      // 跨多个 leaf 的范围（理论上可能存在，比如跨 series 的 range）
+      for (size_t li = idx_lo; li <= idx_hi && li < tree_->leaf_count(); ++li) {
+        const SBTreeLeaf *leaf = tree_->leaf_at(li);
+        if (!leaf)
+          continue;
+        uint64_t leaf_min = leaf->min_key();
+        uint64_t leaf_max = leaf->max_key();
+        if (leaf_min > key_hi || leaf_max < key_lo)
+          continue;
+        leaf->scan_range(key_lo, key_hi, tree_part);
+      }
     }
-
-    leaf->scan_range(key_lo, key_hi, tree_part);
   }
 
   // === RDS part: linear scan with filter ===
-  if (bm_) {
+  if (enable_rds_ && bm_ != nullptr) {
+    rds_part.reserve(128); // 预估容量，避免频繁扩容
+
+    // 读取已合并到 tree 的最大 key（用于剪枝）
+    uint64_t merged_max = g_tree_max_merged_key.load(std::memory_order_acquire);
+
     for (int bi = 0; bi < 2; ++bi) {
       const Buffer &buf = bm_->buffers[bi];
       uint8_t bst = buf.state.load(std::memory_order_acquire);
@@ -805,6 +877,14 @@ inline std::vector<Record> Reader::range_query(uint64_t key_lo,
             s.min_key.load(std::memory_order_acquire); // 已在 WRITING 阶段维护
         uint64_t slot_max =
             s.max_key.load(std::memory_order_acquire); // 已在 WRITING 阶段维护
+
+        // 1) 如果整个 slot 的数据都 <= merged_max，说明这些 key 已经在 tree
+        // 里，可跳过
+        if (slot_max <= merged_max) {
+          continue;
+        }
+
+        // 2) 原来的区间剪枝
         if (slot_max < key_lo || slot_min > key_hi) {
           continue;
         }
@@ -818,11 +898,13 @@ inline std::vector<Record> Reader::range_query(uint64_t key_lo,
         }
       }
     }
-  }
 
-  // Sort RDS part to ensure it's ordered
-  std::sort(rds_part.begin(), rds_part.end(),
-            [](const Record &a, const Record &b) { return a.key < b.key; });
+    // Sort RDS part only if it has more than 1 element
+    if (rds_part.size() > 1) {
+      std::sort(rds_part.begin(), rds_part.end(),
+                [](const Record &a, const Record &b) { return a.key < b.key; });
+    }
+  }
 
   // === Merge tree_part and rds_part (both sorted) ===
   std::vector<Record> out;
@@ -858,23 +940,47 @@ inline void Reader::range_query_into(uint64_t key_lo, uint64_t key_hi,
     return;
   }
 
-  // === Tree part: use leaf min/max for pruning, binary search within range ===
-  const size_t leaf_cnt = tree_->leaf_count();
-  for (size_t li = 0; li < leaf_cnt; ++li) {
-    const SBTreeLeaf *leaf = tree_->leaf_at(li);
-    if (!leaf)
-      continue;
+  // === Tree part: 只访问相关 leaf ===
+  if (key_lo > key_hi) {
+    return;
+  }
 
-    // Quick prune: no overlap with [key_lo, key_hi]
-    if (leaf->max_key() < key_lo || leaf->min_key() > key_hi) {
-      continue;
+  if (tree_) {
+    size_t idx_lo = tree_->leaf_index_for_key(key_lo);
+    size_t idx_hi = tree_->leaf_index_for_key(key_hi);
+
+    if (idx_lo == idx_hi) {
+      // 大多数情况：单 series 的 time range，只访问一个 leaf
+      const SBTreeLeaf *leaf = tree_->leaf_at(idx_lo);
+      if (leaf) {
+        uint64_t leaf_min = leaf->min_key();
+        uint64_t leaf_max = leaf->max_key();
+        if (!(leaf_min > key_hi || leaf_max < key_lo)) {
+          leaf->scan_range(key_lo, key_hi, tree_part);
+        }
+      }
+    } else {
+      // 跨多个 leaf 的范围（理论上可能存在，比如跨 series 的 range）
+      for (size_t li = idx_lo; li <= idx_hi && li < tree_->leaf_count(); ++li) {
+        const SBTreeLeaf *leaf = tree_->leaf_at(li);
+        if (!leaf)
+          continue;
+        uint64_t leaf_min = leaf->min_key();
+        uint64_t leaf_max = leaf->max_key();
+        if (leaf_min > key_hi || leaf_max < key_lo)
+          continue;
+        leaf->scan_range(key_lo, key_hi, tree_part);
+      }
     }
-
-    leaf->scan_range(key_lo, key_hi, tree_part);
   }
 
   // === RDS part: linear scan with filter ===
-  if (bm_) {
+  if (enable_rds_ && bm_ != nullptr) {
+    rds_part.reserve(128); // 预估容量，避免频繁扩容
+
+    // 读取已合并到 tree 的最大 key（用于剪枝）
+    uint64_t merged_max = g_tree_max_merged_key.load(std::memory_order_acquire);
+
     for (int bi = 0; bi < 2; ++bi) {
       const Buffer &buf = bm_->buffers[bi];
       uint8_t bst = buf.state.load(std::memory_order_acquire);
@@ -899,6 +1005,14 @@ inline void Reader::range_query_into(uint64_t key_lo, uint64_t key_hi,
         // Slot-level key range 剪枝
         uint64_t slot_min = s.min_key.load(std::memory_order_acquire);
         uint64_t slot_max = s.max_key.load(std::memory_order_acquire);
+
+        // 1) 如果整个 slot 的数据都 <= merged_max，说明这些 key 已经在 tree
+        // 里，可跳过
+        if (slot_max <= merged_max) {
+          continue;
+        }
+
+        // 2) 原来的区间剪枝
         if (slot_max < key_lo || slot_min > key_hi) {
           continue;
         }
@@ -912,11 +1026,13 @@ inline void Reader::range_query_into(uint64_t key_lo, uint64_t key_hi,
         }
       }
     }
-  }
 
-  // Sort RDS part to ensure it's ordered
-  std::sort(rds_part.begin(), rds_part.end(),
-            [](const Record &a, const Record &b) { return a.key < b.key; });
+    // Sort RDS part only if it has more than 1 element
+    if (rds_part.size() > 1) {
+      std::sort(rds_part.begin(), rds_part.end(),
+                [](const Record &a, const Record &b) { return a.key < b.key; });
+    }
+  }
 
   // === Merge tree_part and rds_part (both sorted) ===
   out.reserve(tree_part.size() + rds_part.size());
@@ -941,21 +1057,33 @@ inline bool Reader::lookup(uint64_t key, Record &out) const {
   bool found = false;
   Record best{};
 
-  // 1. 先查 tree 部分：只定位一个 leaf
+  // 1. 先查 tree 部分：直接定位到对应 leaf
   if (tree_) {
-    SBTreeLeaf *leaf = tree_->locate_leaf(key);
+    const SBTreeLeaf *leaf = tree_->leaf_for_key(key);
     if (leaf) {
-      Record r;
-      if (leaf->lookup(key, r)) {
-        best = r;
-        found = true;
+      uint64_t leaf_min = leaf->min_key();
+      uint64_t leaf_max = leaf->max_key();
+      if (key >= leaf_min && key <= leaf_max) {
+        Record r;
+        if (leaf->lookup(key, r)) {
+          best = r;
+          found = true;
+        }
       }
     }
   }
 
+  // 如果是离线 tree-only Reader，直接返回 tree 的结果
+  if (!enable_rds_) {
+    if (found) {
+      out = best;
+    }
+    return found;
+  }
+
   // 2. 再查 buffer 部分：两个 buffer 中 SEALED 的 slot
   // buffer 里的记录更"新"，所以如果找到，应该优先使用 buffer 的结果
-  if (bm_) {
+  if (enable_rds_ && bm_ != nullptr) {
     for (int bi = 0; bi < 2; ++bi) {
       const Buffer &buf = bm_->buffers[bi];
       uint8_t bst = buf.state.load(std::memory_order_acquire);
@@ -963,8 +1091,12 @@ inline bool Reader::lookup(uint64_t key, Record &out) const {
         continue;
       }
 
-      const uint32_t slots = buf.slot_capacity;
-      for (uint32_t si = 0; si < slots; ++si) {
+      uint32_t upper = buf.alloc_idx.load(std::memory_order_acquire);
+      if (upper > buf.slot_capacity) {
+        upper = buf.slot_capacity;
+      }
+
+      for (uint32_t si = 0; si < upper; ++si) {
         const Slot &s = buf.slots[si];
         uint8_t st = s.state.load(std::memory_order_acquire);
         if (st != SLOT_STATE_SEALED) {
@@ -1000,8 +1132,9 @@ inline bool Reader::lookup(uint64_t key, Record &out) const {
 
   if (found) {
     out = best;
+    return true;
   }
-  return found;
+  return false;
 }
 
 // =========================
@@ -1201,17 +1334,22 @@ inline void SBTreeLeaf::scan_range(uint64_t key_lo, uint64_t key_hi,
                                    std::vector<Record> &out) const {
   std::shared_lock<std::shared_mutex> lock(mutex_);
   // 快速剪枝：如果整个 leaf 的范围与查询范围无交集，直接返回
-  if (total_records_ == 0 || max_key_ < key_lo || min_key_ > key_hi) {
+  if (blocks_.empty() || max_key_ < key_lo || min_key_ > key_hi) {
     return;
   }
 
-  for (const auto &blk_ptr : blocks_) {
-    const DataBlock *blk = blk_ptr.get();
+  // 使用二分查找定位起始 block
+  size_t start_idx = lower_bound_block(key_lo);
+  const size_t n_blocks = blocks_.size();
+
+  for (size_t bi = start_idx; bi < n_blocks; ++bi) {
+    const DataBlock *blk = blocks_[bi].get();
     if (!blk || blk->count == 0) {
       continue;
     }
-    if (blk->max_key < key_lo || blk->min_key > key_hi) {
-      continue;
+    // block 起始 key 已经超过 hi，后面都可以跳过
+    if (blk->min_key > key_hi) {
+      break;
     }
     blk->scan_range(key_lo, key_hi, out);
   }
@@ -1225,18 +1363,24 @@ inline bool SBTreeLeaf::lookup(uint64_t key, Record &out) const {
     return false;
   }
 
-  // 遍历所有 DataBlock（一般就 1~几块）
-  for (const auto &blk_ptr : blocks_) {
-    const DataBlock *blk = blk_ptr.get();
+  // 使用二分查找定位起始 block
+  size_t idx = lower_bound_block(key);
+  const size_t n_blocks = blocks_.size();
+
+  for (size_t bi = idx; bi < n_blocks; ++bi) {
+    const DataBlock *blk = blocks_[bi].get();
     if (!blk || blk->count == 0) {
       continue;
     }
-
-    // 利用 block 的 key 范围做快速剪枝
-    if (key < blk->min_key || key > blk->max_key) {
+    // key 小于当前 block 的 min_key，后面的 min_key 只会更大，可以退出
+    if (key < blk->min_key) {
+      break;
+    }
+    // key 大于当前 block 的 max_key，继续看下一个 block
+    if (key > blk->max_key) {
       continue;
     }
-
+    // key 在当前 block 的范围内，尝试查找
     if (blk->lookup(key, out)) {
       return true;
     }
@@ -1251,20 +1395,34 @@ inline size_t SBTreeLeaf::size() const {
 
 inline SBTree::SBTree() = default;
 
-inline SBTreeLeaf *SBTree::locate_leaf(uint64_t key) {
-  // Simple range partitioning by high bits: split 64-bit key space into
-  // kLeafCount contiguous ranges.
+inline size_t SBTree::leaf_index_for_key(uint64_t key) const noexcept {
+  // 与 locate_leaf 里的逻辑保持一致
+  // key 的高 16 bit 是 series_id，用 series_id 的低 kLeafBits 位来选择 leaf
   if (kLeafCount == 0) {
-    return nullptr;
+    return 0;
   }
-  // Use the top log2(kLeafCount) bits to choose a leaf.
   static_assert((kLeafCount & (kLeafCount - 1)) == 0,
                 "kLeafCount must be power of two");
-  size_t idx = static_cast<size_t>(key >> (64 - kLeafBits));
+  // 提取 series_id（高 16 bit），然后用低 kLeafBits 位来选择 leaf
+  uint64_t series_id = key >> 48;
+  size_t idx = static_cast<size_t>(series_id) & (kLeafCount - 1);
   if (idx >= kLeafCount) {
     idx = kLeafCount - 1;
   }
-  return &leaves_[idx];
+  return idx;
+}
+
+inline SBTreeLeaf *SBTree::leaf_for_key(uint64_t key) noexcept {
+  return &leaves_[leaf_index_for_key(key)];
+}
+
+inline const SBTreeLeaf *SBTree::leaf_for_key(uint64_t key) const noexcept {
+  return &leaves_[leaf_index_for_key(key)];
+}
+
+inline SBTreeLeaf *SBTree::locate_leaf(uint64_t key) {
+  // 改为使用 leaf_for_key 实现
+  return leaf_for_key(key);
 }
 
 inline void SBTree::merge_run_into_leaf(SBTreeLeaf *leaf,
@@ -1405,10 +1563,22 @@ inline void MergeWorker::run_once() {
 
   auto merge_task = [&](size_t leaf_idx) {
     auto &batch = leaf_batches_[leaf_idx];
+    if (batch.empty()) {
+      return;
+    }
     std::sort(batch.begin(), batch.end(),
               [](const Record &a, const Record &b) { return a.key < b.key; });
     SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
     tree_->merge_run_into_leaf(leaf, batch);
+
+    // 更新全局最大已合并 key（batch 已排序，back() 就是最大 key）
+    uint64_t run_max = batch.back().key;
+    uint64_t prev = g_tree_max_merged_key.load(std::memory_order_relaxed);
+    while (run_max > prev && !g_tree_max_merged_key.compare_exchange_weak(
+                                 prev, run_max, std::memory_order_release,
+                                 std::memory_order_relaxed)) {
+      // CAS 失败会把新的 prev 带出来，再比一轮
+    }
   };
 
   if (leaf_indices_to_merge.size() == 1) {
