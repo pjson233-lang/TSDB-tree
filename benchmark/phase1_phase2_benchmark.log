@@ -1,0 +1,78 @@
+=== Phase 1+2 Optimization: Benchmark (slot16k, flip20ms) ===
+
+===== Threads=16 =====
+
+--- ins ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 16
+Flip interval      : 20 ms
+
+=== INSERT-ONLY workload ===
+  series          : 1024
+  total records   : 10240000
+  slots/buffer    : 15047
+  threads         : 16
+  flip interval   : 20 ms
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+Insert Finished!
+  Total inserted records : 10240000
+  Total time             : 244.889 ms
+  Throughput             : 94.8069 Mops/sec
+  Per-thread time range  : [107.255 ms, 108.856 ms]
+  Memory Usage           : 514.202 MB
+  Buffered records       : 8318343
+  Tree records           : 1921657
+  Alloc failures         : 0
+  Buffer Waste Ratio     : 50.1075 %
+  Slot Fill Ratio        : 99.9425 %
+  Merge iterations       : 1
+  Merge total time       : 224.465 ms
+  Merge CPU Ratio        : 91.6599 %
+  Tree records (post-flush) : 10240000
+
+===== TSDB Unified Benchmark Done =====
+
+--- scan ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 16
+Flip interval      : 20 ms
+
+=== SCAN-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done.
+
+Scan Finished!
+  Total scan ops         : 5120
+  Total returned records : 279502
+  Avg records per scan   : 54.5902
+  Total time             : 169.533 ms
+  Throughput             : 30.2006 Kops/sec (scan operations)
+
+===== TSDB Unified Benchmark Done =====
+
+--- mix ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 16
+Flip interval      : 20 ms
+
+=== MIXED workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building initial index...
+[BuildIndex] Done.
+

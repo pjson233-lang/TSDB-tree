@@ -45,7 +45,8 @@ static constexpr uint64_t kTotalRecords = kRecordsPerSensor * kNumSeries;
 static constexpr uint64_t kTimeStepMs = 50;
 
 // 时间戳起点（毫秒）
-static constexpr Timestamp kStartTimestamp = 1756684800000ULL; // 2025-09-01 00:00:00.000
+static constexpr Timestamp kStartTimestamp =
+    1756684800000ULL; // 2025-09-01 00:00:00.000
 
 // 每个传感器一条序列
 static std::vector<InputPoint> g_series[kNumSeries];
@@ -295,7 +296,8 @@ void ScanThreadFunc(Reader *reader, double &elapsed_us, size_t &scan_op_count,
     // 每个传感器做 5 次范围扫描
     for (int k = 0; k < 5; ++k) {
       size_t start_idx = dist(rng);
-      uint64_t start_key = MakeKey(tuples[start_idx].series, tuples[start_idx].ts);
+      uint64_t start_key =
+          MakeKey(tuples[start_idx].series, tuples[start_idx].ts);
       size_t count = len_dist(rng);
 
       // 估算 end_key：假设 key 间隔约为 kTimeStepMs * kNumSeries
@@ -354,7 +356,8 @@ void MixedThreadFunc(Engine *eng, Reader *reader, double &elapsed_us,
       const auto &tuples = g_series[sensor_id];
       if (!tuples.empty()) {
         size_t start_idx = idx_dist(rng);
-        uint64_t start_key = MakeKey(tuples[start_idx].series, tuples[start_idx].ts);
+        uint64_t start_key =
+            MakeKey(tuples[start_idx].series, tuples[start_idx].ts);
         size_t len = long_len_dist(rng);
         uint64_t end_key = start_key + len * kTimeStepMs * kNumSeries;
         reader->range_query_into(start_key, end_key, local_buf);
@@ -366,7 +369,8 @@ void MixedThreadFunc(Engine *eng, Reader *reader, double &elapsed_us,
       const auto &tuples = g_series[sensor_id];
       if (!tuples.empty()) {
         size_t start_idx = idx_dist(rng);
-        uint64_t start_key = MakeKey(tuples[start_idx].series, tuples[start_idx].ts);
+        uint64_t start_key =
+            MakeKey(tuples[start_idx].series, tuples[start_idx].ts);
         size_t len = short_len_dist(rng);
         uint64_t end_key = start_key + len * kTimeStepMs * kNumSeries;
         reader->range_query_into(start_key, end_key, local_buf);
@@ -441,7 +445,8 @@ void RunInsertOnly(uint32_t num_threads, int flip_interval_ms) {
       auto m1 = clock::now();
 
       merge_time_us +=
-          std::chrono::duration_cast<std::chrono::microseconds>(m1 - m0).count();
+          std::chrono::duration_cast<std::chrono::microseconds>(m1 - m0)
+              .count();
       ++merge_iterations;
     }
   });
@@ -485,7 +490,8 @@ void RunInsertOnly(uint32_t num_threads, int flip_interval_ms) {
   std::vector<double> sorted_times = thread_times;
   std::sort(sorted_times.begin(), sorted_times.end());
   double median_thread_us = sorted_times[sorted_times.size() / 2];
-  double insert_wall_sec = (median_thread_us > 0.0) ? (median_thread_us / 1e6) : 0.0;
+  double insert_wall_sec =
+      (median_thread_us > 0.0) ? (median_thread_us / 1e6) : 0.0;
   double throughput_mops =
       (insert_wall_sec > 0.0)
           ? (static_cast<double>(total_inserted) / insert_wall_sec / 1e6)
@@ -515,8 +521,10 @@ void RunInsertOnly(uint32_t num_threads, int flip_interval_ms) {
 
   std::cout << "Insert Finished!\n";
   std::cout << "  Total inserted records : " << total_inserted << "\n";
-  std::cout << "  Total time             : " << total_time_us / 1000.0 << " ms\n";
-  std::cout << "  Throughput             : " << throughput_mops << " Mops/sec\n";
+  std::cout << "  Total time             : " << total_time_us / 1000.0
+            << " ms\n";
+  std::cout << "  Throughput             : " << throughput_mops
+            << " Mops/sec\n";
   std::cout << "  Per-thread time range  : [" << min_thread_ms << " ms, "
             << max_thread_ms << " ms]\n";
   std::cout << "  Memory Usage           : "
@@ -526,7 +534,8 @@ void RunInsertOnly(uint32_t num_threads, int flip_interval_ms) {
   std::cout << "  Alloc failures         : " << alloc_failures << "\n";
   std::cout << "  Buffer Waste Ratio     : " << buffer_waste_ratio * 100.0
             << " %\n";
-  std::cout << "  Slot Fill Ratio        : " << slot_fill_ratio * 100.0 << " %\n";
+  std::cout << "  Slot Fill Ratio        : " << slot_fill_ratio * 100.0
+            << " %\n";
 
   double merge_ms = merge_time_us / 1000.0;
   std::cout << "  Merge iterations       : " << merge_iterations << "\n";
@@ -602,15 +611,20 @@ void RunLookupOnly(uint32_t num_threads) {
   }
 
   double lookup_throughput_mops =
-      (total_time_s > 0.0) ? (static_cast<double>(total_probes) / total_time_s / 1e6) : 0.0;
+      (total_time_s > 0.0)
+          ? (static_cast<double>(total_probes) / total_time_s / 1e6)
+          : 0.0;
 
   std::cout << "Lookup Finished!\n";
   std::cout << "  Total lookups issued   : " << total_probes << "\n";
   std::cout << "  Total hits             : " << total_found << "\n";
   std::cout << "  Hit rate               : "
-            << (total_probes ? (100.0 * total_found / total_probes) : 0.0) << " %\n";
-  std::cout << "  Total time             : " << total_time_us / 1000.0 << " ms\n";
-  std::cout << "  Throughput             : " << lookup_throughput_mops << " Mops/sec\n";
+            << (total_probes ? (100.0 * total_found / total_probes) : 0.0)
+            << " %\n";
+  std::cout << "  Total time             : " << total_time_us / 1000.0
+            << " ms\n";
+  std::cout << "  Throughput             : " << lookup_throughput_mops
+            << " Mops/sec\n";
 }
 
 // Scan-only workload
@@ -678,15 +692,20 @@ void RunScanOnly(uint32_t num_threads) {
   }
 
   double scan_throughput_kops =
-      (total_time_s > 0.0) ? (static_cast<double>(total_scan_ops) / total_time_s / 1e3) : 0.0;
+      (total_time_s > 0.0)
+          ? (static_cast<double>(total_scan_ops) / total_time_s / 1e3)
+          : 0.0;
 
   std::cout << "Scan Finished!\n";
   std::cout << "  Total scan ops         : " << total_scan_ops << "\n";
   std::cout << "  Total returned records : " << total_scan_results << "\n";
   std::cout << "  Avg records per scan   : "
-            << (total_scan_ops ? (double)total_scan_results / (double)total_scan_ops : 0.0)
+            << (total_scan_ops
+                    ? (double)total_scan_results / (double)total_scan_ops
+                    : 0.0)
             << "\n";
-  std::cout << "  Total time             : " << total_time_us / 1000.0 << " ms\n";
+  std::cout << "  Total time             : " << total_time_us / 1000.0
+            << " ms\n";
   std::cout << "  Throughput             : " << scan_throughput_kops
             << " Kops/sec (scan operations)\n";
 }
@@ -762,10 +781,10 @@ void RunMixed(uint32_t num_threads, int flip_interval_ms) {
   Timer total_timer;
   total_timer.Start();
   for (uint32_t t = 0; t < num_threads; ++t) {
-    threads.emplace_back(MixedThreadFunc, &eng, &reader, std::ref(thread_times[t]),
-                         std::ref(thread_insert_ops[t]),
-                         std::ref(thread_lookup_ops[t]),
-                         std::ref(thread_scan_ops[t]), ops_per_thread);
+    threads.emplace_back(
+        MixedThreadFunc, &eng, &reader, std::ref(thread_times[t]),
+        std::ref(thread_insert_ops[t]), std::ref(thread_lookup_ops[t]),
+        std::ref(thread_scan_ops[t]), ops_per_thread);
   }
   for (auto &th : threads) {
     th.join();
@@ -789,9 +808,12 @@ void RunMixed(uint32_t num_threads, int flip_interval_ms) {
     total_scan_ops += thread_scan_ops[t];
   }
 
-  uint64_t total_ops_done = total_insert_ops + total_lookup_ops + total_scan_ops;
+  uint64_t total_ops_done =
+      total_insert_ops + total_lookup_ops + total_scan_ops;
   double throughput_mops =
-      (total_time_s > 0.0) ? (static_cast<double>(total_ops_done) / total_time_s / 1e6) : 0.0;
+      (total_time_s > 0.0)
+          ? (static_cast<double>(total_ops_done) / total_time_s / 1e6)
+          : 0.0;
   uint64_t buffered_records = CountBufferedRecords(bm);
   uint64_t tree_records = CountTreeRecords(tree);
   SlotStats slot_stats = ComputeSlotStats(bm);
@@ -808,24 +830,27 @@ void RunMixed(uint32_t num_threads, int flip_interval_ms) {
           ? static_cast<double>(slot_stats.filled_records) /
                 (static_cast<double>(slot_stats.used_slots) * slot_capacity)
           : 0.0;
-  double merge_ratio =
-      (total_time_us > 0.0)
-          ? (static_cast<double>(merge_time_us.load(std::memory_order_relaxed)) /
-             total_time_us)
-          : 0.0;
+  double merge_ratio = (total_time_us > 0.0)
+                           ? (static_cast<double>(merge_time_us.load(
+                                  std::memory_order_relaxed)) /
+                              total_time_us)
+                           : 0.0;
 
   std::cout << "Mixed Finished!\n";
   std::cout << "  Total ops              : " << total_ops_done << "\n";
   std::cout << "    Insert ops           : " << total_insert_ops << "\n";
   std::cout << "    Lookup ops           : " << total_lookup_ops << "\n";
   std::cout << "    Scan ops             : " << total_scan_ops << "\n";
-  std::cout << "  Total time             : " << total_time_us / 1000.0 << " ms\n";
-  std::cout << "  Throughput             : " << throughput_mops << " Mops/sec\n";
+  std::cout << "  Total time             : " << total_time_us / 1000.0
+            << " ms\n";
+  std::cout << "  Throughput             : " << throughput_mops
+            << " Mops/sec\n";
   std::cout << "  Buffered records       : " << buffered_records << "\n";
   std::cout << "  Tree records           : " << tree_records << "\n";
   std::cout << "  Buffer Waste Ratio     : " << buffer_waste_ratio * 100.0
             << " %\n";
-  std::cout << "  Slot Fill Ratio        : " << slot_fill_ratio * 100.0 << " %\n";
+  std::cout << "  Slot Fill Ratio        : " << slot_fill_ratio * 100.0
+            << " %\n";
   std::cout << "  Merge CPU Ratio        : " << merge_ratio * 100.0 << " %\n";
 
   flush_all_and_merge_once(&bm, &tree);
@@ -892,4 +917,3 @@ int main(int argc, char *argv[]) {
   std::cout << "\n===== TSDB Unified Benchmark Done =====\n";
   return 0;
 }
-

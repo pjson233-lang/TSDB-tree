@@ -55,8 +55,8 @@ struct Record {
 
 struct DataBlock {
   static constexpr size_t kBlockBytes = 4096;
-  static constexpr size_t kMaxEntries = 256; // 256 * 8 bytes keys + 256 * 8
-                                             // bytes values = 4KB
+  static constexpr size_t kEntryBytes = sizeof(uint64_t) * 2; // key + value
+  static constexpr size_t kMaxEntries = kBlockBytes / kEntryBytes;
   static constexpr size_t kBucketSize = 64;
   static constexpr size_t kBucketCount =
       (kMaxEntries + kBucketSize - 1) / kBucketSize;
@@ -498,7 +498,13 @@ inline void BufferManager::flip_buffers() {
 inline void BufferManager::seal_all_slots_for_flush() {
   for (int bi = 0; bi < 2; ++bi) {
     Buffer &buf = buffers[bi];
-    for (uint32_t si = 0; si < buf.slot_capacity; ++si) {
+
+    uint32_t upper = buf.alloc_idx.load(std::memory_order_acquire);
+    if (upper > buf.slot_capacity) {
+      upper = buf.slot_capacity;
+    }
+
+    for (uint32_t si = 0; si < upper; ++si) {
       Slot &s = buf.slots[si];
       uint8_t st = s.state.load(std::memory_order_acquire);
       uint16_t h = s.size_acquire(); // Use size_acquire() helper
@@ -687,7 +693,14 @@ private:
       if (bst != BUFFER_STATE_SEALED) {
         continue;
       }
-      for (uint32_t i = 0; i < buf.slot_capacity; ++i) {
+
+      // 只遍历已分配的 slot 范围
+      uint32_t upper = buf.alloc_idx.load(std::memory_order_acquire);
+      if (upper > buf.slot_capacity) {
+        upper = buf.slot_capacity; // 防御性，理论上不会 > slot_capacity
+      }
+
+      for (uint32_t i = 0; i < upper; ++i) {
         const Slot &s = buf.slots[i];
         uint8_t st = s.state.load(std::memory_order_acquire);
         if (st != SLOT_STATE_SEALED) {
@@ -771,7 +784,12 @@ inline std::vector<Record> Reader::range_query(uint64_t key_lo,
       if (bst != BUFFER_STATE_SEALED)
         continue;
 
-      for (uint32_t si = 0; si < buf.slot_capacity; ++si) {
+      uint32_t upper = buf.alloc_idx.load(std::memory_order_acquire);
+      if (upper > buf.slot_capacity) {
+        upper = buf.slot_capacity;
+      }
+
+      for (uint32_t si = 0; si < upper; ++si) {
         const Slot &s = buf.slots[si];
         uint8_t st = s.state.load(std::memory_order_acquire);
         if (st != SLOT_STATE_SEALED)
@@ -863,7 +881,12 @@ inline void Reader::range_query_into(uint64_t key_lo, uint64_t key_hi,
       if (bst != BUFFER_STATE_SEALED)
         continue;
 
-      for (uint32_t si = 0; si < buf.slot_capacity; ++si) {
+      uint32_t upper = buf.alloc_idx.load(std::memory_order_acquire);
+      if (upper > buf.slot_capacity) {
+        upper = buf.slot_capacity;
+      }
+
+      for (uint32_t si = 0; si < upper; ++si) {
         const Slot &s = buf.slots[si];
         uint8_t st = s.state.load(std::memory_order_acquire);
         if (st != SLOT_STATE_SEALED)
