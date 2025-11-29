@@ -376,6 +376,287 @@ void TestLookupCorrectness() {
   std::cout << "[TestLookupCorrectness] passed\n";
 }
 
+// Stage 2 Step 2.1: 测试 build_blocks_from_slot 处理乱序数据
+void TestBuildBlocksFromSlotOutOfOrder() {
+  std::cout << "[TestBuildBlocksFromSlotOutOfOrder] start\n";
+  BufferManager bm(/*slots_per_buffer=*/8);
+  SBTree tree;
+  Engine eng(&bm, &tree);
+  MergeWorker worker(&bm, &tree);
+
+  // 插入乱序数据：先插入大 key，再插入小 key
+  constexpr int kN = 500;
+  for (int i = kN - 1; i >= 0; --i) {
+    eng.insert(i, i);
+  }
+  eng.flush_thread_local();
+
+  // 执行 merge
+  bm.flip_buffers();
+  worker.run_once();
+  flush_all_and_merge_once(&bm, &tree);
+
+  // 验证所有数据都在 tree 中且有序
+  Reader reader(&bm, &tree);
+  auto all = reader.scan_all();
+  assert(all.size() == static_cast<size_t>(kN));
+
+  // 验证有序
+  for (size_t i = 1; i < all.size(); ++i) {
+    assert(all[i - 1].key <= all[i].key);
+  }
+
+  // 验证完整性：每个 key 都存在且 value 正确
+  std::vector<bool> found(kN, false);
+  for (const auto &r : all) {
+    assert(r.key < static_cast<uint64_t>(kN));
+    assert(r.value == r.key);
+    found[r.key] = true;
+  }
+  for (int i = 0; i < kN; ++i) {
+    assert(found[i]);
+  }
+
+  std::cout << "[TestBuildBlocksFromSlotOutOfOrder] passed\n";
+}
+
+// Stage 2 Step 2.1: 测试多个 slot 的数据正确合并
+void TestMultipleSlotsMerge() {
+  std::cout << "[TestMultipleSlotsMerge] start\n";
+  BufferManager bm(/*slots_per_buffer=*/16);
+  SBTree tree;
+  Engine eng(&bm, &tree);
+  MergeWorker worker(&bm, &tree);
+
+  // 插入数据，确保会使用多个 slot
+  constexpr int kN = 2000;
+  for (int i = 0; i < kN; ++i) {
+    eng.insert(i, i);
+  }
+  eng.flush_thread_local();
+
+  // 执行 merge
+  bm.flip_buffers();
+  worker.run_once();
+  flush_all_and_merge_once(&bm, &tree);
+
+  // 验证数据完整性
+  uint64_t tree_records = CountTreeRecords(tree);
+  assert(tree_records == static_cast<uint64_t>(kN));
+
+  // 验证所有数据可查询
+  Reader reader(&bm, &tree);
+  for (int i = 0; i < kN; i += 100) {
+    Record r;
+    assert(reader.lookup(i, r));
+    assert(r.key == static_cast<uint64_t>(i));
+    assert(r.value == static_cast<uint64_t>(i));
+  }
+
+  std::cout << "[TestMultipleSlotsMerge] passed\n";
+}
+
+// Stage 2 Step 2.1: 测试跨 leaf 的数据路由
+void TestCrossLeafRouting() {
+  std::cout << "[TestCrossLeafRouting] start\n";
+  BufferManager bm(/*slots_per_buffer=*/8);
+  SBTree tree;
+  Engine eng(&bm, &tree);
+  MergeWorker worker(&bm, &tree);
+
+  // 插入跨多个 leaf 的数据（利用 key 的高位做 leaf 分片）
+  constexpr int kN = 1000;
+  // 插入不同 series_id 的数据，确保跨 leaf
+  for (int series = 0; series < 10; ++series) {
+    for (int ts = 0; ts < 100; ++ts) {
+      uint64_t key =
+          (static_cast<uint64_t>(series) << 48) | static_cast<uint64_t>(ts);
+      eng.insert(key, key);
+    }
+  }
+  eng.flush_thread_local();
+
+  // 执行 merge
+  bm.flip_buffers();
+  worker.run_once();
+  flush_all_and_merge_once(&bm, &tree);
+
+  // 验证数据完整性
+  uint64_t tree_records = CountTreeRecords(tree);
+  assert(tree_records == static_cast<uint64_t>(kN));
+
+  // 验证跨 leaf 查询
+  Reader reader(&bm, &tree);
+  for (int series = 0; series < 10; ++series) {
+    uint64_t key = (static_cast<uint64_t>(series) << 48) | 50ULL;
+    Record r;
+    assert(reader.lookup(key, r));
+    assert(r.key == key);
+    assert(r.value == key);
+  }
+
+  std::cout << "[TestCrossLeafRouting] passed\n";
+}
+
+// Stage 2 Step 2.1: 测试全局最大已合并 key 更新
+void TestGlobalMaxMergedKey() {
+  std::cout << "[TestGlobalMaxMergedKey] start\n";
+  BufferManager bm(/*slots_per_buffer=*/8);
+  SBTree tree;
+  Engine eng(&bm, &tree);
+  MergeWorker worker(&bm, &tree);
+
+  // 重置全局 key
+  g_tree_max_merged_key.store(0, std::memory_order_relaxed);
+
+  // 插入数据
+  constexpr int kN = 500;
+  for (int i = 0; i < kN; ++i) {
+    eng.insert(i, i);
+  }
+  eng.flush_thread_local();
+
+  // 执行 merge
+  bm.flip_buffers();
+  worker.run_once();
+  flush_all_and_merge_once(&bm, &tree);
+
+  // 验证全局最大已合并 key 已更新
+  uint64_t max_key = g_tree_max_merged_key.load(std::memory_order_acquire);
+  assert(max_key >= static_cast<uint64_t>(kN - 1));
+
+  // 再次插入更大 key 的数据
+  for (int i = kN; i < kN * 2; ++i) {
+    eng.insert(i, i);
+  }
+  eng.flush_thread_local();
+
+  // 再次 merge
+  bm.flip_buffers();
+  worker.run_once();
+  flush_all_and_merge_once(&bm, &tree);
+
+  // 验证全局最大已合并 key 已更新
+  uint64_t max_key2 = g_tree_max_merged_key.load(std::memory_order_acquire);
+  assert(max_key2 >= static_cast<uint64_t>(kN * 2 - 1));
+  assert(max_key2 > max_key);
+
+  std::cout << "[TestGlobalMaxMergedKey] passed\n";
+}
+
+// Stage 2 Step 2.1: 测试大量数据场景
+void TestLargeScaleInsert() {
+  std::cout << "[TestLargeScaleInsert] start\n";
+  BufferManager bm(/*slots_per_buffer=*/1024);
+  SBTree tree;
+  Engine eng(&bm, &tree);
+  MergeWorker worker(&bm, &tree);
+
+  // 插入大量数据
+  constexpr int kN = 10000;
+  for (int i = 0; i < kN; ++i) {
+    eng.insert(i, i);
+  }
+  eng.flush_thread_local();
+
+  // 执行 merge
+  bm.flip_buffers();
+  worker.run_once();
+  flush_all_and_merge_once(&bm, &tree);
+
+  // 验证数据完整性
+  uint64_t tree_records = CountTreeRecords(tree);
+  assert(tree_records == static_cast<uint64_t>(kN));
+
+  // 验证随机查询
+  Reader reader(&bm, &tree);
+  std::vector<int> test_keys = {0, 100, 1000, 5000, 9999};
+  for (int k : test_keys) {
+    Record r;
+    assert(reader.lookup(k, r));
+    assert(r.key == static_cast<uint64_t>(k));
+    assert(r.value == static_cast<uint64_t>(k));
+  }
+
+  // 验证范围查询
+  std::vector<Record> range_result;
+  reader.range_query_into(1000, 2000, range_result);
+  assert(range_result.size() == 1001); // 1000 到 2000 共 1001 条
+  assert(range_result[0].key == 1000);
+  assert(range_result[1000].key == 2000);
+
+  std::cout << "[TestLargeScaleInsert] passed\n";
+}
+
+// Stage 2 Step 2.1: 测试并发插入和 merge
+void TestConcurrentInsertAndMerge() {
+  std::cout << "[TestConcurrentInsertAndMerge] start\n";
+  constexpr uint32_t kThreads = 4;
+  constexpr uint32_t kSlotsPerBuffer = 512;
+  constexpr int kRecordsPerThread = 2000;
+
+  BufferManager bm(kSlotsPerBuffer);
+  SBTree tree;
+  Engine eng(&bm, &tree);
+  MergeWorker worker(&bm, &tree);
+
+  std::atomic<bool> keep_flipping{true};
+  std::thread flipper([&]() {
+    using clock = std::chrono::high_resolution_clock;
+    auto next = clock::now();
+    while (keep_flipping.load(std::memory_order_relaxed)) {
+      next += std::chrono::milliseconds(10);
+      std::this_thread::sleep_until(next);
+      bm.flip_buffers();
+      worker.run_once();
+    }
+  });
+
+  // 多线程插入
+  std::vector<std::thread> threads;
+  std::atomic<int> total_inserted{0};
+  for (uint32_t t = 0; t < kThreads; ++t) {
+    threads.emplace_back([&, t]() {
+      int base = static_cast<int>(t) * kRecordsPerThread;
+      for (int i = 0; i < kRecordsPerThread; ++i) {
+        eng.insert(base + i, base + i);
+        total_inserted.fetch_add(1, std::memory_order_relaxed);
+      }
+      eng.flush_thread_local();
+    });
+  }
+
+  for (auto &th : threads) {
+    th.join();
+  }
+
+  keep_flipping.store(false);
+  if (flipper.joinable()) {
+    flipper.join();
+  }
+
+  // 最终 merge
+  flush_all_and_merge_once(&bm, &tree);
+
+  // 验证数据完整性
+  uint64_t tree_records = CountTreeRecords(tree);
+  assert(tree_records == static_cast<uint64_t>(kThreads * kRecordsPerThread));
+
+  // 验证所有数据可查询
+  Reader reader(&bm, &tree);
+  for (uint32_t t = 0; t < kThreads; ++t) {
+    int base = static_cast<int>(t) * kRecordsPerThread;
+    for (int i = 0; i < kRecordsPerThread; i += 100) {
+      Record r;
+      assert(reader.lookup(base + i, r));
+      assert(r.key == static_cast<uint64_t>(base + i));
+      assert(r.value == static_cast<uint64_t>(base + i));
+    }
+  }
+
+  std::cout << "[TestConcurrentInsertAndMerge] passed\n";
+}
+
 } // namespace
 
 int main() {
@@ -386,6 +667,15 @@ int main() {
   TestScanRangeCorrectness();
   TestRangeQueryInto();
   TestLookupCorrectness();
+
+  // Stage 2 Step 2.1: 新增正确性测试
+  TestBuildBlocksFromSlotOutOfOrder();
+  TestMultipleSlotsMerge();
+  TestCrossLeafRouting();
+  TestGlobalMaxMergedKey();
+  TestLargeScaleInsert();
+  TestConcurrentInsertAndMerge();
+
   std::cout << "All tsdb_core tests passed.\n";
   return 0;
 }

@@ -398,6 +398,8 @@ using DataBlockPtr = std::unique_ptr<DataBlock, DataBlockDeleter>;
 // Max number of records that can fit into one slot of size SLOT_SIZE_BYTES.
 // This is the compile-time capacity used by writers (hwm limit).
 static constexpr uint32_t SLOT_CAPACITY = SLOT_SIZE_BYTES / sizeof(Record);
+// Stage 1 Step 1.1: Chunk 分配大小（每个线程一次分配这么多 slots）
+static constexpr uint32_t kSlotsPerChunk = 16;
 
 static_assert(SLOT_SIZE_BYTES % alignof(Record) == 0,
               "SLOT_SIZE_BYTES must be a multiple of Record alignment");
@@ -417,11 +419,13 @@ struct Slot {
   // Pointer to contiguous records buffer (size: SLOT_SIZE_BYTES /
   // sizeof(Record))
   Record *recs;
-  // High-water mark: number of valid records in this slot.
-  // Only the owning writer thread increments this; readers/mergers read it
-  // after observing state == SLOT_STATE_SEALED. We still make it atomic so that
-  // flush/merge/统计代码在并发场景下没有数据竞争。
-  std::atomic<uint16_t> hwm;
+  // Stage 1 Step 1.2: 将 hwm 拆分为 writer_hwm（仅写线程访问）和
+  // committed_hwm（对 Reader/Merge 可见） 保留 atomic hwm 用于向后兼容，但 hot
+  // path 使用 writer_hwm
+  std::atomic<uint16_t> hwm; // 向后兼容，在 flip 时同步
+  uint16_t writer_hwm;       // 仅写线程访问，普通 uint16_t
+  uint16_t
+      committed_hwm; // 对 Reader / Merge 可见，在 flip 时从 writer_hwm 拷贝
   // Slot state: WRITING / SEALED / CONSUMED. Accessed concurrently by writer,
   // merge thread, and flush logic, so it must be atomic.
   std::atomic<uint8_t> state;
@@ -433,7 +437,8 @@ struct Slot {
   std::atomic<uint64_t> max_key;
 
   Slot()
-      : recs(nullptr), hwm(0), state(SLOT_STATE_WRITING),
+      : recs(nullptr), hwm(0), writer_hwm(0), committed_hwm(0),
+        state(SLOT_STATE_WRITING),
         min_key(std::numeric_limits<uint64_t>::max()), max_key(0) {}
 
   // ============ Semantic Helpers (encapsulate atomic + memory_order)
@@ -451,12 +456,15 @@ struct Slot {
   }
 
   // merge / flush / reader 侧读取当前大小，使用 acquire 同步
+  // Stage 1 Step 1.2: 读取 committed_hwm（在 flip 时已同步）
   inline uint16_t size_acquire() const {
-    return hwm.load(std::memory_order_acquire);
+    return committed_hwm; // plain read，因为 flip 时已经做了 release fence
   }
 
   // 新分配 slot 时调用，初始化为 WRITING 状态，使用 release 保证可见性
   inline void reset_for_write() {
+    writer_hwm = 0;
+    committed_hwm = 0;
     hwm.store(0, std::memory_order_release);
     state.store(SLOT_STATE_WRITING, std::memory_order_release);
     min_key.store(std::numeric_limits<uint64_t>::max(),
@@ -517,7 +525,14 @@ struct ThreadLocalCtx {
   Slot *current_slot;
   uint32_t current_buf_idx;
 
-  ThreadLocalCtx() : current_slot(nullptr), current_buf_idx(0) {}
+  // Stage 1 Step 1.1: Chunk 分配相关字段
+  uint32_t slot_begin; // 预留到的 [slot_begin, slot_end)
+  uint32_t slot_end;
+  uint16_t cur_pos; // 当前 slot 内的写入位置
+
+  ThreadLocalCtx()
+      : current_slot(nullptr), current_buf_idx(0), slot_begin(0), slot_end(0),
+        cur_pos(0) {}
 };
 
 inline thread_local ThreadLocalCtx tls_ctx;
@@ -537,6 +552,10 @@ public:
 
   // allocate one slot from current write buffer (low frequency)
   Slot *allocate_slot();
+
+  // Stage 1 Step 1.1: 一次性从 alloc_idx 上拿一段 slot 区间（chunk 分配）
+  // 返回是否成功，成功时 begin/end 被设置
+  bool alloc_slot_chunk(uint32_t n, uint32_t &begin, uint32_t &end);
 
   // flip W buffer (every time slice)
   void flip_buffers();
@@ -606,6 +625,36 @@ inline Slot *BufferManager::allocate_slot() {
   return &s;
 }
 
+// Stage 1 Step 1.1: 一次性从 alloc_idx 上拿一段 slot 区间（chunk 分配）
+inline bool BufferManager::alloc_slot_chunk(uint32_t n, uint32_t &begin,
+                                            uint32_t &end) {
+  uint32_t w = current_w_idx();
+  Buffer &buf = buffers[w];
+
+  uint32_t cur = buf.alloc_idx.load(std::memory_order_relaxed);
+  while (true) {
+    if (cur + n > buf.slot_capacity) {
+      // 没空间了
+      alloc_failures.fetch_add(1, std::memory_order_relaxed);
+      return false;
+    }
+
+    // CAS 原子地分配 chunk
+    if (buf.alloc_idx.compare_exchange_weak(cur, cur + n,
+                                            std::memory_order_acq_rel,
+                                            std::memory_order_relaxed)) {
+      begin = cur;
+      end = cur + n;
+      // 初始化这些 slot
+      for (uint32_t i = begin; i < end; ++i) {
+        buf.slots[i].reset_for_write();
+      }
+      return true;
+    }
+    // CAS 失败时，cur 已更新，循环重试
+  }
+}
+
 inline BufferManager::~BufferManager() {
   for (int i = 0; i < 2; ++i) {
     Buffer &buf = buffers[i];
@@ -627,16 +676,34 @@ inline BufferManager::~BufferManager() {
 inline void BufferManager::flip_buffers() {
   uint32_t old = w_idx.load(std::memory_order_relaxed);
   uint32_t next = old ^ 1u;
+  Buffer &buf = buffers[old];
+
+  // Stage 1 Step 1.2: 先把 WRITING buffer 的所有 slot 的写入进度"封存"
+  uint32_t upper = buf.alloc_idx.load(std::memory_order_acquire);
+  if (upper > buf.slot_capacity) {
+    upper = buf.slot_capacity;
+  }
+  for (uint32_t i = 0; i < upper; ++i) {
+    Slot &s = buf.slots[i];
+    // 只处理曾经用过的 slot
+    if (s.writer_hwm > 0) {
+      s.committed_hwm = s.writer_hwm;
+      s.hwm.store(s.writer_hwm, std::memory_order_release); // 向后兼容
+    }
+  }
 
   // P0 Correctness Fix: fence (controlled by TSDB_STRICT_CONSISTENCY)
   TSDB_FENCE_BEFORE_SEAL();
+
+  // memory fence 确保 records / committed_hwm 对其他线程可见
+  std::atomic_thread_fence(std::memory_order_release);
 
   // Flip active write buffer index (single atomic store on hot path).
   w_idx.store(next, std::memory_order_release);
 
   // Mark old buffer sealed so background workers can start processing it.
   // Use release semantics to ensure visibility of slot state changes.
-  buffers[old].state.store(BUFFER_STATE_SEALED, std::memory_order_release);
+  buf.state.store(BUFFER_STATE_SEALED, std::memory_order_release);
 
   // Reset next buffer allocator & mark as writing.
   buffers[next].alloc_idx.store(0, std::memory_order_relaxed);
@@ -803,6 +870,9 @@ public:
   // leaf routing (build runs for tree merge)
   void route_slot(Slot *s);
 
+  // Stage 2 Step 2.1: 直接从 slot 构建 DataBlock 并插入到 leaf
+  void build_blocks_from_slot(Slot *s);
+
 private:
   BufferManager *bm;
   SBTree *tree_;
@@ -912,7 +982,7 @@ private:
         if (st != SLOT_STATE_SEALED) {
           continue;
         }
-        uint16_t n = s.hwm.load(std::memory_order_acquire);
+        uint16_t n = s.committed_hwm; // Stage 1 Step 1.2: 使用 committed_hwm
         if (n == 0) {
           continue;
         }
@@ -1350,7 +1420,7 @@ inline bool Reader::lookup(uint64_t key, Record &out) const {
           continue;
         }
 
-        uint16_t sz = s.hwm.load(std::memory_order_acquire);
+        uint16_t sz = s.committed_hwm; // Stage 1 Step 1.2: 使用 committed_hwm
         if (sz == 0) {
           continue;
         }
@@ -1806,7 +1876,7 @@ inline void MergeWorker::sort_slot(Slot *s) {
   if (!s) {
     return;
   }
-  const uint16_t n = s->hwm.load(std::memory_order_acquire);
+  const uint16_t n = s->committed_hwm; // Stage 1 Step 1.2: 使用 committed_hwm
   if (n <= 1) {
     return;
   }
@@ -1820,7 +1890,7 @@ inline void MergeWorker::route_slot(Slot *s) {
   if (!s || !tree_) {
     return;
   }
-  const uint16_t n = s->hwm.load(std::memory_order_acquire);
+  const uint16_t n = s->committed_hwm; // Stage 1 Step 1.2: 使用 committed_hwm
   if (n == 0) {
     return;
   }
@@ -1841,6 +1911,57 @@ inline void MergeWorker::route_slot(Slot *s) {
   }
 }
 
+// Stage 2 Step 2.1: 直接从 slot 构建 DataBlock 并插入到 leaf
+inline void MergeWorker::build_blocks_from_slot(Slot *s) {
+  if (!s || !tree_) {
+    return;
+  }
+  const uint16_t n = s->committed_hwm;
+  if (n == 0) {
+    return;
+  }
+
+  // 1) 对 slot 排序（如果还没排序）
+  if (n > 1) {
+    std::sort(s->recs, s->recs + n,
+              [](const Record &a, const Record &b) { return a.key < b.key; });
+  }
+
+  // 2) 按 leaf 分组，直接构建 DataBlock
+  uint16_t start = 0;
+  while (start < n) {
+    const uint64_t key = s->recs[start].key;
+    SBTreeLeaf *leaf = tree_->locate_leaf(key);
+    if (!leaf) {
+      break;
+    }
+
+    // 找到属于同一 leaf 的连续记录段
+    uint16_t end = start + 1;
+    while (end < n && tree_->locate_leaf(s->recs[end].key) == leaf) {
+      ++end;
+    }
+
+    // 3) 对这段记录，直接构建 DataBlock 并插入到 leaf
+    // 使用 merge_runs 的 fast path（append-only），但直接传入 Record* 范围
+    std::vector<Record> run(s->recs + start, s->recs + end);
+    tree_->merge_run_into_leaf(leaf, run);
+
+    // 更新全局最大已合并 key（run 已排序，back() 就是最大 key）
+    if (!run.empty()) {
+      uint64_t run_max = run.back().key;
+      uint64_t prev = g_tree_max_merged_key.load(std::memory_order_relaxed);
+      while (run_max > prev && !g_tree_max_merged_key.compare_exchange_weak(
+                                   prev, run_max, std::memory_order_release,
+                                   std::memory_order_relaxed)) {
+        // CAS 失败会把新的 prev 带出来，再比一轮
+      }
+    }
+
+    start = end;
+  }
+}
+
 // Helper: route slot records into per-leaf batches.
 // Simplified version (doesn't assume slot is sorted).
 // IMPORTANT: Must be called after the caller has ensured state==SEALED
@@ -1851,7 +1972,7 @@ inline void route_slot_to_batches(SBTree *tree, Slot *s,
   if (!tree || !s) {
     return;
   }
-  const uint16_t n = s->hwm.load(std::memory_order_acquire);
+  const uint16_t n = s->committed_hwm; // Stage 1 Step 1.2: 使用 committed_hwm
   if (n == 0) {
     return;
   }
@@ -1874,10 +1995,7 @@ inline void MergeWorker::run_once() {
     return;
   }
 
-  const size_t kLeafCount = leaf_batches_.size();
-  for (auto &batch : leaf_batches_) {
-    batch.clear();
-  }
+  // Stage 2 Step 2.1: 不再需要 leaf_batches_，直接处理每个 slot
 
   // 1) 扫描所有 SEALED buffer，把 slot 中的数据按 leaf 聚合到 leaf_batches
   for (int bi = 0; bi < 2; ++bi) {
@@ -1901,81 +2019,23 @@ inline void MergeWorker::run_once() {
       // P0 Correctness Fix: fence (controlled by TSDB_STRICT_CONSISTENCY)
       TSDB_FENCE_BEFORE_SEAL();
 
-      uint16_t n = s->hwm.load(std::memory_order_acquire);
+      uint16_t n = s->committed_hwm; // Stage 1 Step 1.2: 使用 committed_hwm
       if (n == 0) {
         continue;
       }
 
-      // Optimization: skip per-slot sorting, let leaf-level sort handle it
-      route_slot_to_batches(tree_, s, leaf_batches_);
-      // 这个 slot 的内容已经完全挪到 leaf_batches 里了
+      // Stage 2 Step 2.1: 直接从 slot 构建 DataBlock，减少中间拷贝
+      build_blocks_from_slot(s);
+
+      // 这个 slot 的内容已经完全处理完了
       s->hwm.store(0, std::memory_order_release);
       s->state.store(SLOT_STATE_CONSUMED, std::memory_order_release);
     }
   }
 
-  // 2) 对每个 leaf 的 batch sort 一次，然后 merge_runs 一次
-  std::vector<size_t> leaf_indices_to_merge;
-  leaf_indices_to_merge.reserve(kLeafCount);
-  for (size_t leaf_idx = 0; leaf_idx < kLeafCount; ++leaf_idx) {
-    if (!leaf_batches_[leaf_idx].empty()) {
-      leaf_indices_to_merge.push_back(leaf_idx);
-    }
-  }
-
-  if (leaf_indices_to_merge.empty()) {
-    return;
-  }
-
-  auto merge_task = [&](size_t leaf_idx) {
-    auto &batch = leaf_batches_[leaf_idx];
-    if (batch.empty()) {
-      return;
-    }
-    std::sort(batch.begin(), batch.end(),
-              [](const Record &a, const Record &b) { return a.key < b.key; });
-    SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
-    tree_->merge_run_into_leaf(leaf, batch);
-
-    // 更新全局最大已合并 key（batch 已排序，back() 就是最大 key）
-    uint64_t run_max = batch.back().key;
-    uint64_t prev = g_tree_max_merged_key.load(std::memory_order_relaxed);
-    while (run_max > prev && !g_tree_max_merged_key.compare_exchange_weak(
-                                 prev, run_max, std::memory_order_release,
-                                 std::memory_order_relaxed)) {
-      // CAS 失败会把新的 prev 带出来，再比一轮
-    }
-  };
-
-  if (leaf_indices_to_merge.size() == 1) {
-    merge_task(leaf_indices_to_merge.front());
-    return;
-  }
-
-  const size_t hw_threads =
-      std::max<size_t>(1, std::thread::hardware_concurrency());
-  const size_t worker_count =
-      std::min(hw_threads, leaf_indices_to_merge.size());
-  std::atomic<size_t> next{0};
-
-  auto worker_loop = [&]() {
-    while (true) {
-      size_t idx = next.fetch_add(1);
-      if (idx >= leaf_indices_to_merge.size()) {
-        break;
-      }
-      merge_task(leaf_indices_to_merge[idx]);
-    }
-  };
-
-  std::vector<std::thread> merge_workers;
-  merge_workers.reserve(worker_count);
-  for (size_t i = 0; i < worker_count; ++i) {
-    merge_workers.emplace_back(worker_loop);
-  }
-  for (auto &worker : merge_workers) {
-    worker.join();
-  }
+  // Stage 2 Step 2.1: 不再需要 leaf_batches_ 的聚合和二次排序
+  // 所有 slot 已经在 build_blocks_from_slot 中直接构建 DataBlock 并插入到 leaf
+  // 全局最大已合并 key 也在 build_blocks_from_slot 中更新
 }
 
 inline Engine::Engine(BufferManager *buf_mgr, SBTree *tree)
@@ -1988,33 +2048,61 @@ inline void Engine::insert(uint64_t key, uint64_t value) {
   // semantics).
   uint32_t w = bm->current_w_idx();
 
+  // Stage 1 Step 1.1: 使用 chunk 分配的优化路径
   // Slow path: no current slot or slot is full or buffer flipped.
-  // Use size_acquire() to see the latest hwm value written by fast path
-  // (fetch_add acq_rel)
-  if (s == nullptr || s->size_acquire() >= SLOT_CAPACITY ||
+  if (s == nullptr || tls_ctx.cur_pos >= SLOT_CAPACITY ||
       tls_ctx.current_buf_idx != w) {
     // Seal previous slot if switching away due to full or buffer flip.
     // Only seal if it has data (to avoid SEALED empty slots)
-    if (s != nullptr && s->size_acquire() > 0) {
+    if (s != nullptr && tls_ctx.cur_pos > 0) {
+      // Stage 1 Step 1.2: 同步 writer_hwm 到 committed_hwm（在 flip
+      // 时会统一处理）
+      s->writer_hwm = tls_ctx.cur_pos;
+      s->hwm.store(tls_ctx.cur_pos, std::memory_order_release); // 向后兼容
       // P0 Correctness Fix: fence (controlled by TSDB_STRICT_CONSISTENCY)
       TSDB_FENCE_BEFORE_SEAL();
       s->state.store(SLOT_STATE_SEALED, std::memory_order_release);
     }
-    s = bm->allocate_slot();
-    if (!s) {
-      // Allocation failed (buffer full). In this minimal implementation we
-      // simply drop the write; production code should implement backpressure
-      // or error handling.
-      return;
+
+    // 尝试从预留的 chunk 中取下一个 slot
+    if (tls_ctx.slot_begin < tls_ctx.slot_end) {
+      // 还有预留的 slot，直接使用
+      uint32_t idx = tls_ctx.slot_begin++;
+      Buffer &buf = bm->buffers[w];
+      s = &buf.slots[idx];
+      tls_ctx.current_slot = s;
+      tls_ctx.current_buf_idx = w;
+      tls_ctx.cur_pos = 0;
+    } else {
+      // 本地区间用完，向 BufferManager 申请一段新的 slot 区间
+      uint32_t begin, end;
+      if (!bm->alloc_slot_chunk(kSlotsPerChunk, begin, end)) {
+        // 当前 buffer 空了，回退到单 slot 分配
+        s = bm->allocate_slot();
+        if (!s) {
+          // Allocation failed (buffer full)
+          return;
+        }
+        tls_ctx.current_slot = s;
+        tls_ctx.current_buf_idx = w;
+        tls_ctx.cur_pos = 0;
+        tls_ctx.slot_begin = 0;
+        tls_ctx.slot_end = 0;
+      } else {
+        // 成功分配 chunk，使用第一个 slot
+        tls_ctx.slot_begin = begin + 1;
+        tls_ctx.slot_end = end;
+        Buffer &buf = bm->buffers[w];
+        s = &buf.slots[begin];
+        tls_ctx.current_slot = s;
+        tls_ctx.current_buf_idx = w;
+        tls_ctx.cur_pos = 0;
+      }
     }
-    tls_ctx.current_slot = s;
-    tls_ctx.current_buf_idx = w;
   }
 
-  // Fast path: append-only within SWMR slot.
-  // 使用 append_pos() 获取位置（encapsulated fetch_add with acq_rel semantics）
-  uint16_t pos = s->append_pos();
-  // 写入数据（对 merge/flush 可见，因为前面的 append_pos 建立全序）
+  // Fast path: append-only within SWMR slot（使用 thread-local cur_pos）
+  uint16_t pos = tls_ctx.cur_pos++;
   s->recs[pos] = Record{key, value, 0};
 
   // 更新 slot 级别的 key 范围元数据（用于 RDS 侧剪枝）。
@@ -2034,13 +2122,26 @@ inline void Engine::flush_thread_local() {
   if (!s) {
     return;
   }
+
+  // Stage 1 Step 1.2: 同步 writer_hwm 到 committed_hwm
+  if (tls_ctx.cur_pos > 0) {
+    s->writer_hwm = tls_ctx.cur_pos;
+    s->hwm.store(tls_ctx.cur_pos, std::memory_order_release); // 向后兼容
+  }
+
   if (!s->has_data_acquire()) {
     tls_ctx.current_slot = nullptr;
+    tls_ctx.cur_pos = 0;
+    tls_ctx.slot_begin = 0;
+    tls_ctx.slot_end = 0;
     return;
   }
   TSDB_FENCE_BEFORE_SEAL();
   s->seal();
   tls_ctx.current_slot = nullptr;
+  tls_ctx.cur_pos = 0;
+  tls_ctx.slot_begin = 0;
+  tls_ctx.slot_end = 0;
 }
 
 // =========================
