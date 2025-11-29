@@ -176,38 +176,95 @@ struct DataBlock {
       return 0;
     }
 
-    // 先用 N-ary table 找到 bucket
-    size_t start_idx = 0;
+    const uint64_t *ks = keys.data();
+    const uint64_t *vs = values.data();
+
+    // 1) 在 bucket_min_keys 里找 bucket
+    uint32_t b = 0;
+    if (bucket_count > 0) {
+      // 线性扫描 bucket_min_keys（bucket_count 通常很小）
+      while (b + 1 < bucket_count && bucket_min_keys[b + 1] <= start_key) {
+        ++b;
+      }
+    }
+    uint32_t idx = bucket_offsets[b];
+
+    // 2) 在这个 bucket 内线性前进到 >= start_key
+    const uint32_t end =
+        std::min(count, static_cast<uint32_t>(idx + kBucketSize));
+    while (idx < end && ks[idx] < start_key) {
+      ++idx;
+    }
+    if (idx >= count)
+      return 0;
+
+    // 3) 按之前的方式一次性写出
+    size_t n = std::min(max_count, static_cast<size_t>(count - idx));
+    if (n == 0)
+      return 0;
+
+    size_t old_size = out.size();
+    out.resize(old_size + n);
+    Record *dst = out.data() + old_size;
+    for (size_t i = 0; i < n; ++i) {
+      dst[i].key = ks[idx + i];
+      dst[i].value = vs[idx + i];
+      dst[i].epoch = 0;
+    }
+    return n;
+  }
+
+  // Visitor 版本：不构造 Record，只调用 visitor 函数
+  template <class Func>
+  inline size_t scan_from_visit(uint64_t start_key, size_t max_count,
+                                Func &&f) const {
+    if (count == 0 || start_key > max_key) {
+      return 0;
+    }
+
+    // 1) 用 N-ary 找 bucket
+    uint16_t b = 0;
     if (bucket_count > 0) {
       auto it =
           std::upper_bound(bucket_min_keys.begin(),
                            bucket_min_keys.begin() + bucket_count, start_key);
-      if (it != bucket_min_keys.begin()) {
-        size_t b = static_cast<size_t>((it - bucket_min_keys.begin()) - 1);
-        start_idx = bucket_offsets[b];
-      }
-      while (start_idx < static_cast<size_t>(count) &&
-             keys[start_idx] < start_key) {
-        ++start_idx;
-      }
-    } else {
-      // 没有 bucket 时从头找
-      while (start_idx < static_cast<size_t>(count) &&
-             keys[start_idx] < start_key) {
-        ++start_idx;
+      if (it == bucket_min_keys.begin()) {
+        b = 0;
+      } else {
+        b = static_cast<uint16_t>((it - bucket_min_keys.begin()) - 1);
       }
     }
 
-    size_t appended = 0;
-    size_t i = start_idx;
-    const size_t n = static_cast<size_t>(count);
+    size_t start = bucket_offsets[b];
+    size_t end = std::min(static_cast<size_t>(count), start + kBucketSize);
 
-    // 这里不再判断 key_hi，只看数量
-    for (; i < n && appended < max_count; ++i) {
-      out.emplace_back(Record{keys[i], values[i], 0});
-      ++appended;
+    // 2) bucket 内 lower_bound 精确对齐到 start_key
+    const uint64_t *kbeg = keys.data() + start;
+    const uint64_t *kend = keys.data() + end;
+    const uint64_t *it = std::lower_bound(kbeg, kend, start_key);
+
+    size_t emitted = 0;
+    const uint64_t *kptr = keys.data();
+    const uint64_t *vptr = values.data();
+
+    // 3) 从当前 bucket 开始扫描
+    for (; it != kend && emitted < max_count; ++it) {
+      size_t idx = static_cast<size_t>(it - keys.data());
+      f(kptr[idx], vptr[idx]);
+      ++emitted;
     }
-    return appended;
+
+    // 4) 后续 bucket 直接顺序扫（不再做比较）
+    for (uint16_t nb = b + 1; nb < bucket_count && emitted < max_count; ++nb) {
+      size_t off = bucket_offsets[nb];
+      size_t e = std::min(static_cast<size_t>(count), off + kBucketSize);
+      for (size_t i = off; i < e && emitted < max_count; ++i) {
+        f(kptr[i], vptr[i]);
+        ++emitted;
+      }
+    }
+
+    return emitted;
   }
 };
 
@@ -579,6 +636,19 @@ public:
   // 从 start_key 开始，最多返回 max_count 条记录，返回实际条数
   size_t scan_from(uint64_t start_key, size_t max_count,
                    std::vector<Record> &out) const;
+  // 无锁版本，调用方需确保已持有 shared_lock
+  size_t scan_from_nolock(uint64_t start_key, size_t max_count,
+                          std::vector<Record> &out) const;
+  // 带锁版本，用于 Reader 只加一次锁
+  size_t scan_from_with_lock(uint64_t start_key, size_t max_count,
+                             std::vector<Record> &out) const;
+  // Visitor 版本：不构造 Record，只调用 visitor 函数
+  template <class Func>
+  size_t scan_from_visit_nolock(uint64_t start_key, size_t max_count,
+                                Func &&f) const;
+  template <class Func>
+  size_t scan_from_visit_with_lock(uint64_t start_key, size_t max_count,
+                                   Func &&f) const;
   // 精确查找一个 key，找到返回 true，并把结果写到 out
   bool lookup(uint64_t key, Record &out) const;
   size_t size() const;
@@ -736,6 +806,10 @@ public:
   // 新接口：从 start_key 开始，最多扫 count 条（论文风格）
   size_t scan_n(uint64_t start_key, size_t count,
                 std::vector<Record> &out) const;
+
+  // Visitor 版本：不构造 Record，只调用 visitor 函数
+  template <class Func>
+  size_t scan_n_visit(uint64_t start_key, size_t count, Func &&f) const;
 
   // 专用 point lookup：只查一个 key，找到返回 true，并把结果写到 out
   bool lookup(uint64_t key, Record &out) const;
@@ -1117,19 +1191,50 @@ inline void Reader::range_query_into(uint64_t key_lo, uint64_t key_hi,
   }
 }
 
+template <class Func>
+inline size_t Reader::scan_n_visit(uint64_t start_key, size_t count,
+                                   Func &&f) const {
+  // 只谈 tree-only 的 fast path，因为 Scan-only 就是这种模式
+  if (enable_rds_) {
+    // 在线模式暂不支持 visitor，回退到普通版本
+    std::vector<Record> out;
+    return scan_n(start_key, count, out);
+  }
+
+  if (!tree_ || count == 0)
+    return 0;
+
+  size_t leaf_idx = tree_->leaf_index_for_key(start_key);
+  size_t remaining = count;
+  size_t got_total = 0;
+
+  for (size_t li = leaf_idx; li < SBTree::kLeafCount && remaining > 0; ++li) {
+    const SBTreeLeaf *leaf = tree_->leaf_at(li);
+    if (!leaf || leaf->size() == 0)
+      continue;
+
+    uint64_t leaf_start = (li == leaf_idx) ? start_key : leaf->min_key();
+    size_t got = leaf->scan_from_visit_nolock(leaf_start, remaining,
+                                              std::forward<Func>(f));
+    got_total += got;
+    if (got_total >= count)
+      break;
+    remaining = count - got_total;
+  }
+  return got_total;
+}
+
 inline size_t Reader::scan_n(uint64_t start_key, size_t count,
                              std::vector<Record> &out) const {
   out.clear();
   if (!tree_ || count == 0)
     return 0;
 
-  // 目前你按 series_id 分叶，ScanOnly benchmark 里一般不会跨 leaf
-  size_t leaf_idx = tree_->leaf_index_for_key(start_key);
-  const SBTreeLeaf *leaf = tree_->leaf_at(leaf_idx);
-  if (!leaf)
-    return 0;
-
-  return leaf->scan_from(start_key, count, out);
+  // 兼容旧接口：使用 visitor 模式
+  out.reserve(std::max(out.capacity(), count));
+  return scan_n_visit(start_key, count, [&](uint64_t k, uint64_t v) {
+    out.emplace_back(Record{k, v, 0});
+  });
 }
 
 inline bool Reader::lookup(uint64_t key, Record &out) const {
@@ -1452,36 +1557,112 @@ inline void SBTreeLeaf::scan_range_nolock(uint64_t key_lo, uint64_t key_hi,
 
 inline size_t SBTreeLeaf::scan_from(uint64_t start_key, size_t max_count,
                                     std::vector<Record> &out) const {
+  return scan_from_with_lock(start_key, max_count, out);
+}
+
+inline size_t SBTreeLeaf::scan_from_with_lock(uint64_t start_key,
+                                              size_t max_count,
+                                              std::vector<Record> &out) const {
   std::shared_lock<std::shared_mutex> lock(mutex_);
+  return scan_from_nolock(start_key, max_count, out);
+}
+
+inline size_t SBTreeLeaf::scan_from_nolock(uint64_t start_key, size_t max_count,
+                                           std::vector<Record> &out) const {
   if (blocks_.empty() || max_key_ < start_key) {
     return 0;
   }
 
-  size_t start_idx = lower_bound_block(start_key);
-  const size_t n_blocks = blocks_.size();
-  size_t remain = max_count;
-  size_t total = 0;
+  // blocks_ 已经按 min_key 排序，先二分定位 block 起点
+  auto it = std::lower_bound(blocks_.begin(), blocks_.end(), start_key,
+                             [](const DataBlockPtr &b, uint64_t k) {
+                               const DataBlock *blk = b.get();
+                               return blk && blk->count > 0 && blk->max_key < k;
+                             });
+
+  if (it == blocks_.end())
+    return 0;
+
+  size_t remaining = max_count;
+  size_t got_total = 0;
   uint64_t cur_key = start_key;
 
-  for (size_t bi = start_idx; bi < n_blocks && remain > 0; ++bi) {
-    const DataBlock *blk = blocks_[bi].get();
+  for (; it != blocks_.end() && remaining > 0; ++it) {
+    const auto &blk = *it;
     if (!blk || blk->count == 0)
       continue;
 
     if (blk->max_key < cur_key)
       continue;
 
-    size_t got = blk->scan_from(cur_key, remain, out);
+    size_t got = blk->scan_from(cur_key, remaining, out);
     if (got == 0)
       continue;
 
-    total += got;
-    remain -= got;
+    got_total += got;
+    if (got_total >= max_count)
+      break;
+    remaining = max_count - got_total;
 
-    // 后续 block 从自己的 min_key 开始就可以了
-    cur_key = blk->min_key;
+    // 对后续 block，从 block 起点开始
+    cur_key = 0;
   }
-  return total;
+  return got_total;
+}
+
+template <class Func>
+inline size_t SBTreeLeaf::scan_from_visit_with_lock(uint64_t start_key,
+                                                    size_t max_count,
+                                                    Func &&f) const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  return scan_from_visit_nolock(start_key, max_count, std::forward<Func>(f));
+}
+
+template <class Func>
+inline size_t SBTreeLeaf::scan_from_visit_nolock(uint64_t start_key,
+                                                 size_t max_count,
+                                                 Func &&f) const {
+  if (blocks_.empty() || max_key_ < start_key) {
+    return 0;
+  }
+
+  // blocks_ 已经按 min_key 排序，先二分定位 block 起点
+  auto it = std::lower_bound(blocks_.begin(), blocks_.end(), start_key,
+                             [](const DataBlockPtr &b, uint64_t k) {
+                               const DataBlock *blk = b.get();
+                               return blk && blk->count > 0 && blk->max_key < k;
+                             });
+
+  if (it == blocks_.end())
+    return 0;
+
+  size_t remaining = max_count;
+  size_t got_total = 0;
+  uint64_t cur_key = start_key;
+
+  for (; it != blocks_.end() && remaining > 0; ++it) {
+    const auto &blk = *it;
+    if (!blk || blk->count == 0)
+      continue;
+
+    if (blk->max_key < cur_key)
+      continue;
+
+    uint64_t block_start = (got_total == 0) ? cur_key : blk->min_key;
+    size_t got =
+        blk->scan_from_visit(block_start, remaining, std::forward<Func>(f));
+    if (got == 0)
+      continue;
+
+    got_total += got;
+    if (got_total >= max_count)
+      break;
+    remaining = max_count - got_total;
+
+    // 对后续 block，从 block 起点开始
+    cur_key = 0;
+  }
+  return got_total;
 }
 
 inline bool SBTreeLeaf::lookup(uint64_t key, Record &out) const {

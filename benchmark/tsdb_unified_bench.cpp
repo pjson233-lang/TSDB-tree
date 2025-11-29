@@ -273,9 +273,7 @@ void ScanThreadFunc(Reader *reader, double &elapsed_us, size_t &scan_op_count,
   scan_op_count = 0;
   total_returned = 0;
 
-  // 本地 buffer 复用，减少分配开销
-  std::vector<Record> local_buf;
-  local_buf.reserve(256); // 初始估计容量
+  uint64_t local_sum = 0; // 非零工作，防止被优化掉
 
   std::mt19937_64 rng(123456 +
                       std::hash<std::thread::id>{}(std::this_thread::get_id()));
@@ -300,14 +298,22 @@ void ScanThreadFunc(Reader *reader, double &elapsed_us, size_t &scan_op_count,
           MakeKey(tuples[start_idx].series, tuples[start_idx].ts);
       size_t count = len_dist(rng);
 
-      // 使用 scan_n（论文风格）：从 start_key 开始，最多扫 count 条
-      size_t got = reader->scan_n(start_key, count, local_buf);
+      // 使用 scan_n_visit（visitor 模式）：不构造 Record，只累加 value
+      size_t got = reader->scan_n_visit(start_key, count,
+                                        [&](uint64_t key, uint64_t value) {
+                                          local_sum += value; // 非零工作，防止被优化掉
+                                        });
       ++scan_op_count;
       total_returned += got;
     }
   }
 
   elapsed_us = timer.EndUs();
+
+  // 防止编译器优化掉 local_sum
+  if (local_sum == 0xDEADBEEFULL) {
+    fprintf(stderr, "impossible: %llu\n", (unsigned long long)local_sum);
+  }
 }
 
 // Mixed 线程：50% insert, 30% long scan, 10% short scan, 10% lookup
