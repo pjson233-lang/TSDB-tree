@@ -15,6 +15,11 @@
 #include <thread>
 #include <vector>
 
+// SIMD support
+#if defined(__AVX2__) || defined(__AVX512F__)
+#include <immintrin.h>
+#endif
+
 // =========================
 // Configurable Parameters
 // =========================
@@ -53,11 +58,12 @@ struct Record {
 // DataBlock (SB-Tree style)
 // =========================
 
-struct DataBlock {
+struct alignas(64) DataBlock {
   static constexpr size_t kBlockBytes = 4096;
   static constexpr size_t kEntryBytes = sizeof(uint64_t) * 2; // key + value
   static constexpr size_t kMaxEntries = kBlockBytes / kEntryBytes;
-  static constexpr size_t kBucketSize = 64;
+  static constexpr size_t kBucketSize =
+      16; // Step 2: 从 64 调整为 16，增加 bucket 数量
   static constexpr size_t kBucketCount =
       (kMaxEntries + kBucketSize - 1) / kBucketSize;
 
@@ -65,10 +71,10 @@ struct DataBlock {
   uint64_t min_key;
   uint64_t max_key;
 
-  std::array<uint64_t, kMaxEntries> keys;
-  std::array<uint64_t, kMaxEntries> values;
+  alignas(64) std::array<uint64_t, kMaxEntries> keys;
+  alignas(64) std::array<uint64_t, kMaxEntries> values;
 
-  std::array<uint64_t, kBucketCount> bucket_min_keys;
+  alignas(64) std::array<uint64_t, kBucketCount> bucket_min_keys;
   std::array<uint16_t, kBucketCount> bucket_offsets;
   uint16_t bucket_count;
 
@@ -214,6 +220,63 @@ struct DataBlock {
     return n;
   }
 
+  // 辅助函数：SIMD 版本的 bucket 搜索
+#if defined(__AVX2__)
+  inline uint32_t find_bucket_simd(uint64_t start_key) const {
+    const uint64_t *mins = bucket_min_keys.data();
+    __m256i keyv = _mm256_set1_epi64x(static_cast<long long>(start_key));
+    uint32_t i = 0;
+
+    // 每次比较 4 个 bucket_min_keys（AVX2 可以一次处理 4 个 64-bit）
+    for (; i + 4 <= bucket_count; i += 4) {
+      __m256i v =
+          _mm256_loadu_si256(reinterpret_cast<const __m256i *>(mins + i));
+      __m256i cmp = _mm256_cmpgt_epi64(v, keyv); // min > key ?
+      int mask = _mm256_movemask_pd(_mm256_castsi256_pd(cmp));
+      if (mask != 0) {
+        // 找到第一个 min > key 的位置（即第一个 > start_key 的 bucket）
+        int first_gt = __builtin_ctz(mask) & 3;
+        uint32_t result = i + first_gt;
+        // 回退一个得到最后一个 <= start_key 的 bucket
+        if (result > 0) {
+          --result;
+        }
+        return result;
+      }
+    }
+
+    // 扫尾：用标量处理剩余部分
+    while (i < bucket_count && mins[i] <= start_key) {
+      ++i;
+    }
+    if (i > 0) {
+      --i;
+    }
+    return i;
+  }
+#endif
+
+  // 辅助函数：标量版本的 bucket 搜索
+  inline uint32_t find_bucket_scalar(uint64_t start_key) const {
+    const uint64_t *mins = bucket_min_keys.data();
+    uint32_t b = 0;
+    // 找到第一个 > start_key 的 bucket（模拟 std::upper_bound）
+    // 每次比较 4 个，减少分支
+    while (b + 4 <= bucket_count && mins[b + 3] <= start_key) {
+      b += 4;
+    }
+    // 扫尾
+    while (b < bucket_count && mins[b] <= start_key) {
+      ++b;
+    }
+    // 如果 b == 0，说明所有 bucket_min_keys 都 > start_key，用 bucket 0
+    // 否则，回退一个得到最后一个 <= start_key 的 bucket
+    if (b > 0) {
+      --b;
+    }
+    return b;
+  }
+
   // Visitor 版本：不构造 Record，只调用 visitor 函数
   template <class Func>
   inline size_t scan_from_visit(uint64_t start_key, size_t max_count,
@@ -222,17 +285,10 @@ struct DataBlock {
       return 0;
     }
 
-    // 1) 用 N-ary 找 bucket
-    uint16_t b = 0;
+    // 1) 用 N-ary 找 bucket（手写循环，便于 unroll）
+    uint32_t b = 0;
     if (bucket_count > 0) {
-      auto it =
-          std::upper_bound(bucket_min_keys.begin(),
-                           bucket_min_keys.begin() + bucket_count, start_key);
-      if (it == bucket_min_keys.begin()) {
-        b = 0;
-      } else {
-        b = static_cast<uint16_t>((it - bucket_min_keys.begin()) - 1);
-      }
+      b = find_bucket_scalar(start_key);
     }
 
     size_t start = bucket_offsets[b];

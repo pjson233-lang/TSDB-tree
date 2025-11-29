@@ -181,7 +181,8 @@ void TestSnapshotAllCorrectness() {
     keys.push_back(r.key);
   }
   std::sort(keys.begin(), keys.end());
-  std::vector<uint64_t> expected_keys = {1, 2, 3, 5, 10, 15, 20, 25, 30, 35, 40};
+  std::vector<uint64_t> expected_keys = {1,  2,  3,  5,  10, 15,
+                                         20, 25, 30, 35, 40};
   assert(keys == expected_keys);
 
   // 验证多次调用 snapshot_all 结果一致

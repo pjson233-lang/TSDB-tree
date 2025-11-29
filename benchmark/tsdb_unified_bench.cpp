@@ -51,6 +51,13 @@ static constexpr Timestamp kStartTimestamp =
 // 每个传感器一条序列
 static std::vector<InputPoint> g_series[kNumSeries];
 
+// 预生成的 Scan 查询（Step 1 优化：分离 RNG 开销）
+struct ScanQuery {
+  uint64_t start_key;
+  size_t count;
+};
+static std::vector<ScanQuery> g_scan_queries;
+
 // 多线程写入时用的原子分配器：按 sensor 维度分配 work
 static std::atomic<uint32_t> g_insert_series_id{0};
 
@@ -266,8 +273,35 @@ void GetThreadFunc(Reader *reader, double &elapsed_us, size_t &probe_count,
 }
 
 // Scan 线程：范围查询
+// Step 1: 预生成 Scan 查询，分离 RNG 开销
+void BuildScanQueries() {
+  g_scan_queries.clear();
+  g_scan_queries.reserve(kNumSeries * 5); // 每个 sensor 5 条
+
+  std::mt19937_64 rng(123456);
+  std::uniform_int_distribution<size_t> dist_idx(0, kRecordsPerSensor - 1);
+  std::uniform_int_distribution<size_t> dist_len(10, 100);
+
+  for (SeriesId sid = 0; sid < kNumSeries; ++sid) {
+    const auto &tuples = g_series[sid];
+    if (tuples.empty())
+      continue;
+
+    for (int k = 0; k < 5; ++k) {
+      size_t idx = dist_idx(rng);
+      if (idx >= tuples.size()) {
+        idx = tuples.size() - 1;
+      }
+      uint64_t start_key = MakeKey(tuples[idx].series, tuples[idx].ts);
+      size_t len = dist_len(rng);
+      g_scan_queries.push_back(ScanQuery{start_key, len});
+    }
+  }
+}
+
+// 修改后的 ScanThreadFunc：只消费预生成的查询，不做 RNG
 void ScanThreadFunc(Reader *reader, double &elapsed_us, size_t &scan_op_count,
-                    size_t &total_returned) {
+                    size_t &total_returned, size_t begin, size_t end) {
   Timer timer;
   timer.Start();
   scan_op_count = 0;
@@ -275,37 +309,12 @@ void ScanThreadFunc(Reader *reader, double &elapsed_us, size_t &scan_op_count,
 
   uint64_t local_sum = 0; // 非零工作，防止被优化掉
 
-  std::mt19937_64 rng(123456 +
-                      std::hash<std::thread::id>{}(std::this_thread::get_id()));
-
-  while (true) {
-    uint32_t sensor_id =
-        g_scan_sensor_id.fetch_add(1, std::memory_order_relaxed);
-    if (sensor_id >= kNumSeries) {
-      break;
-    }
-    const auto &tuples = g_series[sensor_id];
-    if (tuples.empty())
-      continue;
-
-    std::uniform_int_distribution<size_t> dist(0, tuples.size() - 1);
-    std::uniform_int_distribution<size_t> len_dist(10, 100); // long scan
-
-    // 每个传感器做 5 次范围扫描
-    for (int k = 0; k < 5; ++k) {
-      size_t start_idx = dist(rng);
-      uint64_t start_key =
-          MakeKey(tuples[start_idx].series, tuples[start_idx].ts);
-      size_t count = len_dist(rng);
-
-      // 使用 scan_n_visit（visitor 模式）：不构造 Record，只累加 value
-      size_t got = reader->scan_n_visit(start_key, count,
-                                        [&](uint64_t key, uint64_t value) {
-                                          local_sum += value; // 非零工作，防止被优化掉
-                                        });
-      ++scan_op_count;
-      total_returned += got;
-    }
+  for (size_t i = begin; i < end; ++i) {
+    const auto &q = g_scan_queries[i];
+    size_t got = reader->scan_n_visit(
+        q.start_key, q.count, [&](uint64_t k, uint64_t v) { local_sum += v; });
+    ++scan_op_count;
+    total_returned += got;
   }
 
   elapsed_us = timer.EndUs();
@@ -670,19 +679,32 @@ void RunScanOnly(uint32_t num_threads) {
   // 使用 tree-only Reader（离线查询模式）
   Reader reader(&tree);
 
+  // Step 1: 预生成查询，分离 RNG 开销
+  std::cout << "[Scan] Building scan queries..." << std::endl;
+  BuildScanQueries();
+  std::cout << "[Scan] Generated " << g_scan_queries.size()
+            << " scan queries.\n"
+            << std::endl;
+
   // 扫描测试
-  g_scan_sensor_id.store(0, std::memory_order_relaxed);
   std::vector<std::thread> threads;
   std::vector<double> thread_times(num_threads, 0.0);
   std::vector<size_t> thread_scan_ops(num_threads, 0);
   std::vector<size_t> thread_scan_results(num_threads, 0);
 
+  size_t total_queries = g_scan_queries.size();
+  size_t per_thread = (total_queries + num_threads - 1) / num_threads;
+
   Timer total_timer;
   total_timer.Start();
   for (uint32_t t = 0; t < num_threads; ++t) {
+    size_t begin = t * per_thread;
+    size_t end = std::min(begin + per_thread, total_queries);
+    if (begin >= end)
+      break;
     threads.emplace_back(ScanThreadFunc, &reader, std::ref(thread_times[t]),
                          std::ref(thread_scan_ops[t]),
-                         std::ref(thread_scan_results[t]));
+                         std::ref(thread_scan_results[t]), begin, end);
   }
   for (auto &th : threads) {
     th.join();
