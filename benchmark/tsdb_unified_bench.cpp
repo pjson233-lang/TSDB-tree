@@ -300,13 +300,10 @@ void ScanThreadFunc(Reader *reader, double &elapsed_us, size_t &scan_op_count,
           MakeKey(tuples[start_idx].series, tuples[start_idx].ts);
       size_t count = len_dist(rng);
 
-      // 估算 end_key：假设 key 间隔约为 kTimeStepMs * kNumSeries
-      // 简化处理：使用较大的范围确保覆盖
-      uint64_t end_key = start_key + count * kTimeStepMs * kNumSeries;
-
-      reader->range_query_into(start_key, end_key, local_buf);
+      // 使用 scan_n（论文风格）：从 start_key 开始，最多扫 count 条
+      size_t got = reader->scan_n(start_key, count, local_buf);
       ++scan_op_count;
-      total_returned += std::min(count, local_buf.size()); // 限制返回数量
+      total_returned += got;
     }
   }
 
