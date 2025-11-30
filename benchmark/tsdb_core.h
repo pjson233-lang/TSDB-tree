@@ -722,6 +722,19 @@ inline void BufferManager::seal_all_slots_for_flush() {
     for (uint32_t si = 0; si < upper; ++si) {
       Slot &s = buf.slots[si];
       uint8_t st = s.state.load(std::memory_order_acquire);
+
+      // P0 Fix: 如果 committed_hwm 为 0，但 writer_hwm 或 hwm 有值，先同步它们
+      // 这发生在没有后台 flipper 的情况下（如 Lookup/Scan 的 build index 阶段）
+      if (s.committed_hwm == 0) {
+        uint16_t hwm_val = s.hwm.load(std::memory_order_acquire);
+        if (hwm_val > 0) {
+          s.committed_hwm = hwm_val;
+        } else if (s.writer_hwm > 0) {
+          s.committed_hwm = s.writer_hwm;
+          s.hwm.store(s.writer_hwm, std::memory_order_release);
+        }
+      }
+
       uint16_t h = s.size_acquire(); // Use size_acquire() helper
       // 收尾时：只要还有数据且未被消费的 slot，都应当标记为已封口
       if (h > 0 && st != SLOT_STATE_CONSUMED) {
@@ -876,6 +889,7 @@ public:
 private:
   BufferManager *bm;
   SBTree *tree_;
+  // Step 1 (Parallel Merge): 按 leaf 分桶，用于并行 merge
   std::array<std::vector<Record>, SBTree::kLeafCount> leaf_batches_;
 };
 
@@ -1995,9 +2009,13 @@ inline void MergeWorker::run_once() {
     return;
   }
 
-  // Stage 2 Step 2.1: 不再需要 leaf_batches_，直接处理每个 slot
+  // Step 1 (Parallel Merge): 第一阶段 - 串行扫描 buffer/slot，按 leaf 分桶
+  // 清空 leaf_batches_
+  for (size_t i = 0; i < SBTree::kLeafCount; ++i) {
+    leaf_batches_[i].clear();
+  }
 
-  // 1) 扫描所有 SEALED buffer，把 slot 中的数据按 leaf 聚合到 leaf_batches
+  // 1) 扫描所有 SEALED buffer，收集 slot 中的数据到 leaf_batches_
   for (int bi = 0; bi < 2; ++bi) {
     Buffer &buf = bm->buffers[bi];
     uint8_t bst = buf.state.load(std::memory_order_acquire);
@@ -2024,18 +2042,75 @@ inline void MergeWorker::run_once() {
         continue;
       }
 
-      // Stage 2 Step 2.1: 直接从 slot 构建 DataBlock，减少中间拷贝
-      build_blocks_from_slot(s);
+      // 按 leaf 分桶：将 slot 中的记录路由到对应的 leaf_batches_
+      // 注意：这里不排序 slot，而是在第二阶段对每个 leaf 的 batch 统一排序
+      for (uint16_t j = 0; j < n; ++j) {
+        const Record &r = s->recs[j];
+        SBTreeLeaf *leaf = tree_->locate_leaf(r.key);
+        if (!leaf) {
+          continue; // Shouldn't happen, but skip if it does
+        }
+        size_t leaf_idx = tree_->leaf_index(leaf);
+        if (leaf_idx < SBTree::kLeafCount) {
+          leaf_batches_[leaf_idx].push_back(r);
+        }
+      }
 
-      // 这个 slot 的内容已经完全处理完了
+      // 标记 slot 为已消费
       s->hwm.store(0, std::memory_order_release);
       s->state.store(SLOT_STATE_CONSUMED, std::memory_order_release);
     }
   }
 
-  // Stage 2 Step 2.1: 不再需要 leaf_batches_ 的聚合和二次排序
-  // 所有 slot 已经在 build_blocks_from_slot 中直接构建 DataBlock 并插入到 leaf
-  // 全局最大已合并 key 也在 build_blocks_from_slot 中更新
+  // Step 1 (Parallel Merge): 第二阶段 - 并行处理每个 leaf 的 batch
+  // 使用简单的 std::thread + join 方式（可以后续优化为线程池）
+  std::vector<std::thread> merge_threads;
+  merge_threads.reserve(SBTree::kLeafCount);
+
+  for (size_t leaf_idx = 0; leaf_idx < SBTree::kLeafCount; ++leaf_idx) {
+    if (leaf_batches_[leaf_idx].empty()) {
+      continue;
+    }
+
+    // 对每个 leaf 的 batch 启动一个线程进行 merge
+    merge_threads.emplace_back([this, leaf_idx]() {
+      auto &batch = leaf_batches_[leaf_idx];
+      if (batch.empty()) {
+        return;
+      }
+
+      // 对 batch 排序（因为 batch 可能来自多个 slot，需要全局有序）
+      if (batch.size() > 1) {
+        std::sort(
+            batch.begin(), batch.end(),
+            [](const Record &a, const Record &b) { return a.key < b.key; });
+      }
+
+      // 获取对应的 leaf 并 merge
+      SBTreeLeaf *leaf = tree_->leaf_at_mut(leaf_idx);
+      if (leaf) {
+        tree_->merge_run_into_leaf(leaf, batch);
+
+        // 更新全局最大已合并 key
+        if (!batch.empty()) {
+          uint64_t run_max = batch.back().key;
+          uint64_t prev = g_tree_max_merged_key.load(std::memory_order_relaxed);
+          while (run_max > prev && !g_tree_max_merged_key.compare_exchange_weak(
+                                       prev, run_max, std::memory_order_release,
+                                       std::memory_order_relaxed)) {
+            // CAS 失败会把新的 prev 带出来，再比一轮
+          }
+        }
+      }
+    });
+  }
+
+  // 等待所有 merge 线程完成
+  for (auto &t : merge_threads) {
+    if (t.joinable()) {
+      t.join();
+    }
+  }
 }
 
 inline Engine::Engine(BufferManager *buf_mgr, SBTree *tree)

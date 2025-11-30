@@ -1,0 +1,573 @@
+=========================================
+最终完整测试（修复后版本）
+测试时间: Sat Nov 29 20:21:30 CST 2025
+重点关注: 数据完整性（alloc_failures, Tree records）
+=========================================
+
+【Insert-Only 性能测试（1-32线程）】
+=========================================
+
+--- 1 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 1
+Flip interval      : 20 ms
+
+=== INSERT-ONLY workload ===
+  series          : 1024
+  total records   : 10240000
+  slots/buffer    : 15017
+  threads         : 1
+  flip interval   : 20 ms
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+Insert Finished!
+  Total inserted records : 10240000
+  Total time             : 232.775 ms
+  Real Throughput        : 43.991 Mops/sec (wall time, includes merge)
+  Writer-only Throughput : 72.1147 Mops/sec (median thread time, write peak)
+  Per-thread time range  : [141.996 ms, 141.996 ms]
+  Memory Usage           : 593.816 MB
+  Buffered records       : 4795763
+  Tree records           : 5440996
+  Alloc failures         : 0
+  Buffer Waste Ratio     : 50.0236 %
+  Slot Fill Ratio        : 99.9845 %
+  Merge iterations       : 2
+  Merge total time       : 212.537 ms
+  Merge CPU Ratio        : 91.3058 %
+  Tree records (post-flush) : 10236759
+
+===== TSDB Unified Benchmark Done =====
+
+--- 2 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 2
+Flip interval      : 20 ms
+
+=== INSERT-ONLY workload ===
+  series          : 1024
+  total records   : 10240000
+  slots/buffer    : 15019
+  threads         : 2
+  flip interval   : 20 ms
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+Insert Finished!
+  Total inserted records : 10240000
+  Total time             : 124.865 ms
+  Real Throughput        : 82.0086 Mops/sec (wall time, includes merge)
+  Writer-only Throughput : 183.644 Mops/sec (median thread time, write peak)
+  Per-thread time range  : [55.701 ms, 55.76 ms]
+  Memory Usage           : 552.871 MB
+  Buffered records       : 6575614
+  Tree records           : 3649382
+  Alloc failures         : 0
+  Buffer Waste Ratio     : 50.0877 %
+  Slot Fill Ratio        : 99.9758 %
+  Merge iterations       : 1
+  Merge total time       : 104.602 ms
+  Merge CPU Ratio        : 83.7721 %
+  Tree records (post-flush) : 10224996
+
+===== TSDB Unified Benchmark Done =====
+
+--- 4 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 4
+Flip interval      : 20 ms
+
+=== INSERT-ONLY workload ===
+  series          : 1024
+  total records   : 10240000
+  slots/buffer    : 15023
+  threads         : 4
+  flip interval   : 20 ms
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+Insert Finished!
+  Total inserted records : 10240000
+  Total time             : 226.195 ms
+  Real Throughput        : 45.2707 Mops/sec (wall time, includes merge)
+  Writer-only Throughput : 314.004 Mops/sec (median thread time, write peak)
+  Per-thread time range  : [32.544 ms, 32.652 ms]
+  Memory Usage           : 613 MB
+  Buffered records       : 3969010
+  Tree records           : 6270990
+  Alloc failures         : 0
+  Buffer Waste Ratio     : 50.0277 %
+  Slot Fill Ratio        : 99.9255 %
+  Merge iterations       : 1
+  Merge total time       : 205.943 ms
+  Merge CPU Ratio        : 91.0467 %
+  Tree records (post-flush) : 10220222
+
+===== TSDB Unified Benchmark Done =====
+
+--- 8 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 8
+Flip interval      : 20 ms
+
+=== INSERT-ONLY workload ===
+  series          : 1024
+  total records   : 10240000
+  slots/buffer    : 15031
+  threads         : 8
+  flip interval   : 20 ms
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+Insert Finished!
+  Total inserted records : 10240000
+  Total time             : 385.685 ms
+  Real Throughput        : 26.5502 Mops/sec (wall time, includes merge)
+  Writer-only Throughput : 508.163 Mops/sec (median thread time, write peak)
+  Per-thread time range  : [16.177 ms, 20.406 ms]
+  Memory Usage           : 700.759 MB
+  Buffered records       : 145718
+  Tree records           : 10094282
+  Alloc failures         : 0
+  Buffer Waste Ratio     : 50.0543 %
+  Slot Fill Ratio        : 96.2445 %
+  Merge iterations       : 1
+  Merge total time       : 365.456 ms
+  Merge CPU Ratio        : 94.755 %
+  Tree records (post-flush) : 10185440
+
+===== TSDB Unified Benchmark Done =====
+
+--- 16 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 16
+Flip interval      : 20 ms
+
+=== INSERT-ONLY workload ===
+  series          : 1024
+  total records   : 10240000
+  slots/buffer    : 15047
+  threads         : 16
+  flip interval   : 20 ms
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+  [WARNING] Alloc failures = 25605 - data may be lost!
+Insert Finished!
+  Total inserted records : 10240000
+  Total time             : 459.126 ms
+  Real Throughput        : 22.3032 Mops/sec (wall time, includes merge)
+  Writer-only Throughput : 654.69 Mops/sec (median thread time, write peak)
+  Per-thread time range  : [2.792 ms, 20.139 ms]
+  Memory Usage           : 704.084 MB
+  Buffered records       : 9477
+  Tree records           : 10217724
+  Alloc failures         : 25605
+  Buffer Waste Ratio     : 50.1698 %
+  Slot Fill Ratio        : 60.4169 %
+  Merge iterations       : 1
+  Merge total time       : 438.885 ms
+  Merge CPU Ratio        : 95.5914 %
+  Tree records (post-flush) : 10227201
+
+===== TSDB Unified Benchmark Done =====
+
+--- 32 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 32
+Flip interval      : 20 ms
+
+=== INSERT-ONLY workload ===
+  series          : 1024
+  total records   : 10240000
+  slots/buffer    : 15079
+  threads         : 32
+  flip interval   : 20 ms
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+  [WARNING] Alloc failures = 3720 - data may be lost!
+Insert Finished!
+  Total inserted records : 10240000
+  Total time             : 401.196 ms
+  Real Throughput        : 25.5237 Mops/sec (wall time, includes merge)
+  Writer-only Throughput : 753.384 Mops/sec (median thread time, write peak)
+  Per-thread time range  : [3.03 ms, 22.987 ms]
+  Memory Usage           : 702.571 MB
+  Buffered records       : 130223
+  Tree records           : 10107922
+  Alloc failures         : 3720
+  Buffer Waste Ratio     : 50.2224 %
+  Slot Fill Ratio        : 85.6246 %
+  Merge iterations       : 1
+  Merge total time       : 378.709 ms
+  Merge CPU Ratio        : 94.395 %
+  Tree records (post-flush) : 10158616
+
+===== TSDB Unified Benchmark Done =====
+
+【Lookup-Only 性能测试（1-32线程）】
+=========================================
+
+--- 1 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 1
+Flip interval      : 20 ms
+
+=== LOOKUP-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10240000
+
+[SanityCheck] Tested 10 keys, found 10 (expected: 10)
+
+Lookup Finished!
+  Total lookups issued   : 1024000
+  Total hits             : 1024000
+  Hit rate               : 100 %
+  Total time             : 104.866 ms
+  Throughput             : 9.76484 Mops/sec
+
+===== TSDB Unified Benchmark Done =====
+
+--- 2 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 2
+Flip interval      : 20 ms
+
+=== LOOKUP-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10240000
+
+[SanityCheck] Tested 10 keys, found 10 (expected: 10)
+
+Lookup Finished!
+  Total lookups issued   : 1024000
+  Total hits             : 1024000
+  Hit rate               : 100 %
+  Total time             : 105.116 ms
+  Throughput             : 9.74162 Mops/sec
+
+===== TSDB Unified Benchmark Done =====
+
+--- 4 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 4
+Flip interval      : 20 ms
+
+=== LOOKUP-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10238878
+
+[SanityCheck] Tested 10 keys, found 10 (expected: 10)
+
+Lookup Finished!
+  Total lookups issued   : 1024000
+  Total hits             : 1023888
+  Hit rate               : 99.9891 %
+  Total time             : 89.488 ms
+  Throughput             : 11.4429 Mops/sec
+
+===== TSDB Unified Benchmark Done =====
+
+--- 8 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 8
+Flip interval      : 20 ms
+
+=== LOOKUP-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10233254
+
+[SanityCheck] Tested 10 keys, found 10 (expected: 10)
+
+Lookup Finished!
+  Total lookups issued   : 1024000
+  Total hits             : 1023326
+  Hit rate               : 99.9342 %
+  Total time             : 63.305 ms
+  Throughput             : 16.1757 Mops/sec
+
+===== TSDB Unified Benchmark Done =====
+
+--- 16 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 16
+Flip interval      : 20 ms
+
+=== LOOKUP-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10230466
+
+[SanityCheck] Tested 10 keys, found 10 (expected: 10)
+
+Lookup Finished!
+  Total lookups issued   : 1024000
+  Total hits             : 1023049
+  Hit rate               : 99.9071 %
+  Total time             : 43.546 ms
+  Throughput             : 23.5154 Mops/sec
+
+===== TSDB Unified Benchmark Done =====
+
+--- 32 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 32
+Flip interval      : 20 ms
+
+=== LOOKUP-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10202350
+
+[SanityCheck] Tested 10 keys, found 10 (expected: 10)
+
+Lookup Finished!
+  Total lookups issued   : 1024000
+  Total hits             : 1020239
+  Hit rate               : 99.6327 %
+  Total time             : 41.176 ms
+  Throughput             : 24.8689 Mops/sec
+
+===== TSDB Unified Benchmark Done =====
+
+【Scan-Only 性能测试（1-32线程）】
+=========================================
+
+--- 1 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 1
+Flip interval      : 20 ms
+
+=== SCAN-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10240000
+
+[Scan] Building scan queries...
+[ScanQuery] Generated 5120 scan queries (each should return 10-100 records)
+[SanityCheck] Tested 10 queries, returned 618 records (expected: > 0)
+
+[Scan] Generated 5120 scan queries.
+
+Scan Finished!
+  Total scan ops         : 5120
+  Total returned records : 277343
+  Avg records per scan   : 54.1686
+  Total time             : 3.281 ms
+  Throughput             : 1560.5 Kops/sec (scan operations)
+
+===== TSDB Unified Benchmark Done =====
+
+--- 2 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 2
+Flip interval      : 20 ms
+
+=== SCAN-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10240000
+
+[Scan] Building scan queries...
+[ScanQuery] Generated 5120 scan queries (each should return 10-100 records)
+[SanityCheck] Tested 10 queries, returned 618 records (expected: > 0)
+
+[Scan] Generated 5120 scan queries.
+
+Scan Finished!
+  Total scan ops         : 5120
+  Total returned records : 277343
+  Avg records per scan   : 54.1686
+  Total time             : 2.987 ms
+  Throughput             : 1714.09 Kops/sec (scan operations)
+
+===== TSDB Unified Benchmark Done =====
+
+--- 4 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 4
+Flip interval      : 20 ms
+
+=== SCAN-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10236340
+
+[Scan] Building scan queries...
+[ScanQuery] Generated 5120 scan queries (each should return 10-100 records)
+[SanityCheck] Tested 10 queries, returned 618 records (expected: > 0)
+
+[Scan] Generated 5120 scan queries.
+
+Scan Finished!
+  Total scan ops         : 5120
+  Total returned records : 277343
+  Avg records per scan   : 54.1686
+  Total time             : 1.419 ms
+  Throughput             : 3608.17 Kops/sec (scan operations)
+
+===== TSDB Unified Benchmark Done =====
+
+--- 8 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 8
+Flip interval      : 20 ms
+
+=== SCAN-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10229302
+
+[Scan] Building scan queries...
+[ScanQuery] Generated 5120 scan queries (each should return 10-100 records)
+[SanityCheck] Tested 10 queries, returned 618 records (expected: > 0)
+
+[Scan] Generated 5120 scan queries.
+
+Scan Finished!
+  Total scan ops         : 5120
+  Total returned records : 277165
+  Avg records per scan   : 54.1338
+  Total time             : 1.235 ms
+  Throughput             : 4145.75 Kops/sec (scan operations)
+
+===== TSDB Unified Benchmark Done =====
+
+--- 16 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 16
+Flip interval      : 20 ms
+
+=== SCAN-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10225110
+
+[Scan] Building scan queries...
+[ScanQuery] Generated 5120 scan queries (each should return 10-100 records)
+[SanityCheck] Tested 10 queries, returned 618 records (expected: > 0)
+
+[Scan] Generated 5120 scan queries.
+
+Scan Finished!
+  Total scan ops         : 5120
+  Total returned records : 277343
+  Avg records per scan   : 54.1686
+  Total time             : 1.013 ms
+  Throughput             : 5054.29 Kops/sec (scan operations)
+
+===== TSDB Unified Benchmark Done =====
+
+--- 32 线程 ---
+===== TSDB Unified Benchmark =====
+Total records      : 10240000
+Records per sensor : 10000
+Sensors            : 1024
+Threads            : 32
+Flip interval      : 20 ms
+
+=== SCAN-ONLY workload ===
+[Generator] target records = 10240000
+[Generator] series = 1024, per_series_cap ≈ 10000
+[Generator] actually generated = 10240000 points.
+[BuildIndex] Building index...
+[BuildIndex] Done. Tree records: 10208534
+
+[Scan] Building scan queries...
+[ScanQuery] Generated 5120 scan queries (each should return 10-100 records)
+[SanityCheck] Tested 10 queries, returned 618 records (expected: > 0)
+
+[Scan] Generated 5120 scan queries.
+
+Scan Finished!
+  Total scan ops         : 5120
+  Total returned records : 277343
+  Avg records per scan   : 54.1686
+  Total time             : 1.44 ms
+  Throughput             : 3555.56 Kops/sec (scan operations)
+
+===== TSDB Unified Benchmark Done =====
+
+=========================================
+测试完成时间: Sat Nov 29 20:21:42 CST 2025
+日志文件: /home/www/sbtree1/benchmark/build/final_test_log_20251129_202130.txt
+=========================================

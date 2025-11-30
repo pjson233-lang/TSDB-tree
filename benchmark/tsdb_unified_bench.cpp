@@ -274,11 +274,13 @@ void GetThreadFunc(Reader *reader, double &elapsed_us, size_t &probe_count,
 
 // Scan 线程：范围查询
 // Step 1: 预生成 Scan 查询，分离 RNG 开销
+// 修复：确保 query 能命中数据，start_key 必须在数据范围内
 void BuildScanQueries() {
   g_scan_queries.clear();
   g_scan_queries.reserve(kNumSeries * 5); // 每个 sensor 5 条
 
   std::mt19937_64 rng(123456);
+  // 确保 start_idx 在有效范围内，且 count 不会超出序列长度
   std::uniform_int_distribution<size_t> dist_idx(0, kRecordsPerSensor - 1);
   std::uniform_int_distribution<size_t> dist_len(10, 100);
 
@@ -292,11 +294,22 @@ void BuildScanQueries() {
       if (idx >= tuples.size()) {
         idx = tuples.size() - 1;
       }
+      // 确保 start_key 在数据范围内
       uint64_t start_key = MakeKey(tuples[idx].series, tuples[idx].ts);
       size_t len = dist_len(rng);
+      // 确保 count 不会超出序列剩余长度
+      if (idx + len > tuples.size()) {
+        len = tuples.size() - idx;
+      }
+      if (len == 0) {
+        len = 1; // 至少扫描 1 条
+      }
       g_scan_queries.push_back(ScanQuery{start_key, len});
     }
   }
+
+  std::cout << "[ScanQuery] Generated " << g_scan_queries.size()
+            << " scan queries (each should return 10-100 records)\n";
 }
 
 // 修改后的 ScanThreadFunc：只消费预生成的查询，不做 RNG
@@ -504,7 +517,15 @@ void RunInsertOnly(uint32_t num_threads, int flip_interval_ms) {
   double median_thread_us = sorted_times[sorted_times.size() / 2];
   double insert_wall_sec =
       (median_thread_us > 0.0) ? (median_thread_us / 1e6) : 0.0;
-  double throughput_mops =
+
+  // 修正：使用总 wall time 计算真实吞吐（包含 merge 时间）
+  double real_throughput_mops =
+      (total_time_s > 0.0)
+          ? (static_cast<double>(total_inserted) / total_time_s / 1e6)
+          : 0.0;
+
+  // 保留 writer-only 吞吐作为参考（纯写入阶段峰值）
+  double writer_only_throughput_mops =
       (insert_wall_sec > 0.0)
           ? (static_cast<double>(total_inserted) / insert_wall_sec / 1e6)
           : 0.0;
@@ -512,6 +533,13 @@ void RunInsertOnly(uint32_t num_threads, int flip_interval_ms) {
   uint64_t buffered_records = CountBufferedRecords(bm);
   uint64_t tree_records = CountTreeRecords(tree);
   uint64_t alloc_failures = bm.alloc_failures.load(std::memory_order_relaxed);
+
+  // 检查数据完整性：alloc_failures 应该为 0
+  if (alloc_failures > 0) {
+    std::cerr << "  [WARNING] Alloc failures = " << alloc_failures
+              << " - data may be lost!\n";
+  }
+
   SlotStats slot_stats = ComputeSlotStats(bm);
   const double slot_capacity = static_cast<double>(SLOT_CAPACITY);
   const double buffer_capacity =
@@ -535,8 +563,10 @@ void RunInsertOnly(uint32_t num_threads, int flip_interval_ms) {
   std::cout << "  Total inserted records : " << total_inserted << "\n";
   std::cout << "  Total time             : " << total_time_us / 1000.0
             << " ms\n";
-  std::cout << "  Throughput             : " << throughput_mops
-            << " Mops/sec\n";
+  std::cout << "  Real Throughput        : " << real_throughput_mops
+            << " Mops/sec (wall time, includes merge)\n";
+  std::cout << "  Writer-only Throughput : " << writer_only_throughput_mops
+            << " Mops/sec (median thread time, write peak)\n";
   std::cout << "  Per-thread time range  : [" << min_thread_ms << " ms, "
             << max_thread_ms << " ms]\n";
   std::cout << "  Memory Usage           : "
@@ -592,7 +622,37 @@ void RunLookupOnly(uint32_t num_threads) {
     th.join();
   }
   flush_all_and_merge_once(&bm, &tree);
-  std::cout << "[BuildIndex] Done.\n" << std::endl;
+  uint64_t tree_records_after_build = CountTreeRecords(tree);
+  std::cout << "[BuildIndex] Done. Tree records: " << tree_records_after_build
+            << "\n"
+            << std::endl;
+
+  // Sanity check: 验证数据确实在 tree 里
+  if (tree_records_after_build == 0) {
+    std::cerr << "[ERROR] Tree is empty after build! Lookup test will fail.\n";
+  } else {
+    // 随机测试几个 key 确保能查到
+    Reader test_reader(&tree);
+    size_t sanity_checks = 0;
+    size_t sanity_hits = 0;
+    for (SeriesId sid = 0; sid < std::min(kNumSeries, 10U); ++sid) {
+      const auto &tuples = g_series[sid];
+      if (!tuples.empty()) {
+        uint64_t test_key = MakeKey(tuples[0].series, tuples[0].ts);
+        Record r;
+        if (test_reader.lookup(test_key, r)) {
+          ++sanity_hits;
+        }
+        ++sanity_checks;
+      }
+    }
+    std::cout << "[SanityCheck] Tested " << sanity_checks << " keys, found "
+              << sanity_hits << " (expected: " << sanity_checks << ")\n"
+              << std::endl;
+    if (sanity_hits == 0 && sanity_checks > 0) {
+      std::cerr << "[WARNING] Sanity check failed - no keys found in tree!\n";
+    }
+  }
 
   // 使用 tree-only Reader（离线查询模式）
   Reader reader(&tree);
@@ -674,7 +734,10 @@ void RunScanOnly(uint32_t num_threads) {
     th.join();
   }
   flush_all_and_merge_once(&bm, &tree);
-  std::cout << "[BuildIndex] Done.\n" << std::endl;
+  uint64_t tree_records_after_build = CountTreeRecords(tree);
+  std::cout << "[BuildIndex] Done. Tree records: " << tree_records_after_build
+            << "\n"
+            << std::endl;
 
   // 使用 tree-only Reader（离线查询模式）
   Reader reader(&tree);
@@ -682,6 +745,27 @@ void RunScanOnly(uint32_t num_threads) {
   // Step 1: 预生成查询，分离 RNG 开销
   std::cout << "[Scan] Building scan queries..." << std::endl;
   BuildScanQueries();
+
+  // Sanity check: 测试几个 query 确保能返回数据
+  if (!g_scan_queries.empty() && tree_records_after_build > 0) {
+    size_t test_queries = std::min(g_scan_queries.size(), size_t(10));
+    size_t test_returned = 0;
+    for (size_t i = 0; i < test_queries; ++i) {
+      const auto &q = g_scan_queries[i];
+      size_t got = reader.scan_n_visit(q.start_key, q.count,
+                                       [](uint64_t k, uint64_t v) {});
+      test_returned += got;
+    }
+    std::cout << "[SanityCheck] Tested " << test_queries
+              << " queries, returned " << test_returned
+              << " records (expected: > 0)\n"
+              << std::endl;
+    if (test_returned == 0) {
+      std::cerr << "[WARNING] Sanity check failed - scan queries returned no "
+                   "records!\n";
+    }
+  }
+
   std::cout << "[Scan] Generated " << g_scan_queries.size()
             << " scan queries.\n"
             << std::endl;
